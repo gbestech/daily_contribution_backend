@@ -19,6 +19,19 @@ $method = $_SERVER['REQUEST_METHOD'];
 $input = json_decode(file_get_contents('php://input'), true);
 $response = [];
 
+// Helper function to convert days to readable format
+function getDaysToMonthsDisplay($days) {
+    if ($days < 30) {
+        return $days . " day" . ($days !== 1 ? 's' : '');
+    }
+    $months = floor($days / 30);
+    $remainingDays = $days % 30;
+    if ($remainingDays === 0) {
+        return $months . " month" . ($months !== 1 ? 's' : '');
+    }
+    return $months . " month" . ($months !== 1 ? 's' : '') . ", " . $remainingDays . " day" . ($remainingDays !== 1 ? 's' : '');
+}
+
 // Handle different request methods
 switch($method) {
     case 'GET':
@@ -102,17 +115,91 @@ switch($method) {
             $settingsStmt->execute();
             $settingsRow = $settingsStmt->fetch(PDO::FETCH_ASSOC);
             
+            $loanSettings = [];
             $minMembershipDays = 180; // Default: 6 months
+            $maxLoansPerMember = 3; // Default: 3 loans max
+            $loanCooldownDays = 30; // Default: 30 days cooldown
+            
             if ($settingsRow) {
                 $loanSettings = json_decode($settingsRow['setting_value'], true);
                 $minMembershipDays = $loanSettings['min_membership_days'] ?? 180;
+                $maxLoansPerMember = $loanSettings['max_loans_per_member'] ?? 3;
+                $loanCooldownDays = $loanSettings['loan_cooldown_days'] ?? 30;
             }
             
-            // Check eligibility
+            // Check eligibility (membership days)
             if ($days_active < $minMembershipDays) {
-                echo json_encode(["error" => "Member must be active for at least " . ceil($minMembershipDays / 30) . " months. Current: " . floor($days_active / 30) . " months"]);
+                $monthsNeeded = ceil($minMembershipDays / 30);
+                $currentMonths = floor($days_active / 30);
+                echo json_encode([
+                    "error" => "Member must be active for at least " . $monthsNeeded . " months. Current: " . $currentMonths . " months (" . $days_active . " days)"
+                ]);
                 exit();
             }
+            
+            // ============================================================
+            // LOAN LIMIT CHECKS
+            // ============================================================
+            
+            // Check 1: Count total loans for this member (all statuses)
+            $countStmt = $pdo->prepare("SELECT COUNT(*) as total_loans FROM loans WHERE user_id = ?");
+            $countStmt->execute([$user_id]);
+            $loanCount = $countStmt->fetch(PDO::FETCH_ASSOC);
+            $totalLoans = $loanCount['total_loans'] ?? 0;
+            
+            // Check if member has reached max loan limit
+            if ($totalLoans >= $maxLoansPerMember) {
+                echo json_encode([
+                    "error" => "You have reached the maximum loan limit of " . $maxLoansPerMember . " loans. Please complete your existing loans before applying for a new one."
+                ]);
+                exit();
+            }
+            
+            // Check 2: Count active loans (pending, approved, active)
+            $activeStmt = $pdo->prepare("SELECT COUNT(*) as active_loans FROM loans WHERE user_id = ? AND status IN ('pending', 'approved', 'active')");
+            $activeStmt->execute([$user_id]);
+            $activeCount = $activeStmt->fetch(PDO::FETCH_ASSOC);
+            $activeLoans = $activeCount['active_loans'] ?? 0;
+            
+            if ($activeLoans > 0) {
+                echo json_encode([
+                    "error" => "You have " . $activeLoans . " active loan(s). Please complete them before requesting a new loan."
+                ]);
+                exit();
+            }
+            
+            // Check 3: Cooldown period (if loan_cooldown_days > 0)
+            if ($loanCooldownDays > 0) {
+                // Get the most recent completed loan
+                $cooldownStmt = $pdo->prepare("
+                    SELECT approval_date, status 
+                    FROM loans 
+                    WHERE user_id = ? AND status IN ('completed', 'approved') 
+                    ORDER BY approval_date DESC 
+                    LIMIT 1
+                ");
+                $cooldownStmt->execute([$user_id]);
+                $lastLoan = $cooldownStmt->fetch(PDO::FETCH_ASSOC);
+                
+                if ($lastLoan && isset($lastLoan['approval_date'])) {
+                    $lastApproval = new DateTime($lastLoan['approval_date']);
+                    $today = new DateTime();
+                    $diff = $today->diff($lastApproval);
+                    $daysSinceLastLoan = $diff->days;
+                    
+                    if ($daysSinceLastLoan < $loanCooldownDays) {
+                        $remainingDays = $loanCooldownDays - $daysSinceLastLoan;
+                        echo json_encode([
+                            "error" => "You must wait " . getDaysToMonthsDisplay($remainingDays) . " before requesting another loan. Cooldown period: " . getDaysToMonthsDisplay($loanCooldownDays)
+                        ]);
+                        exit();
+                    }
+                }
+            }
+            
+            // ============================================================
+            // END OF LOAN LIMIT CHECKS
+            // ============================================================
             
             // Check if amount exceeds 50% of savings/balance
             $savings = floatval($member['balance'] ?: 0);
@@ -155,7 +242,12 @@ switch($method) {
                     "success" => true, 
                     "message" => "Loan request submitted successfully. Waiting for admin approval.", 
                     "loan_id" => $loan_id,
-                    "status" => "pending"
+                    "status" => "pending",
+                    "loan_limits" => [
+                        "total_loans" => $totalLoans + 1,
+                        "max_allowed" => $maxLoansPerMember,
+                        "remaining" => $maxLoansPerMember - ($totalLoans + 1)
+                    ]
                 ];
             } else {
                 $response = ["error" => "Failed to submit loan request"];
@@ -191,6 +283,12 @@ switch($method) {
                 // Add loan amount to member's balance
                 $stmt = $pdo->prepare("UPDATE members SET balance = balance + ? WHERE id = ?");
                 $stmt->execute([$loan['amount'], $loan['user_id']]);
+            }
+            
+            // If status is being changed to completed, update member's loan count
+            if ($new_status == 'completed' && $loan['status'] != 'completed') {
+                // You can add additional logic here for completed loans
+                // e.g., update member's loan history
             }
             
             // Update loan status

@@ -67,3 +67,418 @@ Stack trace:
 #1 {main}
   thrown in C:\xampp\htdocs\baleeg\api\members.php on line 571
 [08-Sep-2026 12:19:16 Europe/Berlin] Failed to insert into admins table: SQLSTATE[23000]: Integrity constraint violation: 1062 Duplicate entry 'Iyami Babami' for key 'username'
+[09-Sep-2026 16:26:35 Europe/Berlin] === LOAN PAYMENT REQUEST ===
+[09-Sep-2026 16:26:35 Europe/Berlin] Method: OPTIONS
+[09-Sep-2026 16:26:35 Europe/Berlin] Input: 
+[09-Sep-2026 16:26:35 Europe/Berlin] === LOAN PAYMENT REQUEST ===
+[09-Sep-2026 16:26:35 Europe/Berlin] Method: POST
+[09-Sep-2026 16:26:35 Europe/Berlin] Input: Array
+(
+    [loan_id] => 4
+    [user_id] => 35
+    [amount] => 20000
+    [payment_date] => 2026-09-09 14:26:35
+    [note] => Payment for loan #4
+)
+
+[09-Sep-2026 16:26:35 Europe/Berlin] Payment Request - Loan ID: 4, User ID: 35, Amount: 20000
+[09-Sep-2026 16:26:35 Europe/Berlin] Loan found: Array
+(
+    [id] => 4
+    [user_id] => 35
+    [amount] => 30000.00
+    [interest] => 0.00
+    [total_payable] => 30000.00
+    [duration_months] => 6
+    [monthly_payment] => 5000.00
+    [status] => approved
+    [request_date] => 2026-09-09 14:25:26
+    [approval_date] => 2026-09-09 15:26:01
+    [completion_date] => 
+    [updated_at] => 2026-09-09 15:26:01
+    [total_paid] => 0.00
+)
+
+[09-Sep-2026 16:26:35 Europe/Berlin] Total paid: 20000, Remaining: 10000
+[09-Sep-2026 16:26:41 Europe/Berlin] === LOAN PAYMENT REQUEST ===
+[09-Sep-2026 16:26:41 Europe/Berlin] Method: OPTIONS
+[09-Sep-2026 16:26:41 Europe/Berlin] Input: 
+[09-Sep-2026 16:26:41 Europe/Berlin] === LOAN PAYMENT REQUEST ===
+[09-Sep-2026 16:26:41 Europe/Berlin] Method: POST
+[09-Sep-2026 16:26:41 Europe/Berlin] Input: Array
+(
+    [loan_id] => 4
+    [user_id] => 35
+    [amount] => 20000
+    [payment_date] => 2026-09-09 14:26:41
+    [note] => Payment for loan #4
+)
+
+[09-Sep-2026 16:26:41 Europe/Berlin] Payment Request - Loan ID: 4, User ID: 35, Amount: 20000
+[09-Sep-2026 16:26:41 Europe/Berlin] Loan found: Array
+(
+    [id] => 4
+    [user_id] => 35
+    [amount] => 30000.00
+    [interest] => 0.00
+    [total_payable] => 30000.00
+    [duration_months] => 6
+    [monthly_payment] => 5000.00
+    [status] => approved
+    [request_date] => 2026-09-09 14:25:26
+    [approval_date] => 2026-09-09 15:26:01
+    [completion_date] => 
+    [updated_at] => 2026-09-09 15:26:01
+    [total_paid] => 0.00
+)
+
+[09-Sep-2026 16:26:41 Europe/Berlin] Total paid: 20000, Remaining: 10000
+[09-Sep-2026 16:26:53 Europe/Berlin] === LOAN PAYMENT REQUEST ===
+[09-Sep-2026 16:26:53 Europe/Berlin] Method: OPTIONS
+[09-Sep-2026 16:26:53 Europe/Berlin] Input: 
+[09-Sep-2026 16:26:53 Europe/Berlin] === LOAN PAYMENT REQUEST ===
+[09-Sep-2026 16:26:53 Europe/Berlin] Method: POST
+[09-Sep-2026 16:26:53 Europe/Berlin] Input: Array
+(
+    [loan_id] => 4
+    [user_id] => 35
+    [amount] => 30000
+    [payment_date] => 2026-09-09 14:26:53
+    [note] => Payment for loan #4
+)
+
+[09-Sep-2026 16:26:53 Europe/Berlin] Payment Request - Loan ID: 4, User ID: 35, Amount: 30000
+[09-Sep-2026 16:26:53 Europe/Berlin] Loan found: Array
+(
+    [id] => 4
+    [user_id] => 35
+    [amount] => 30000.00
+    [interest] => 0.00
+    [total_payable] => 30000.00
+    [duration_months] => 6
+    [monthly_payment] => 5000.00
+    [status] => approved
+    [request_date] => 2026-09-09 14:25:26
+    [approval_date] => 2026-09-09 15:26:01
+    [completion_date] => 
+    [updated_at] => 2026-09-09 15:26:01
+    [total_paid] => 0.00
+)
+
+[09-Sep-2026 16:26:53 Europe/Berlin] Total paid: 30000, Remaining: 0
+[09-Sep-2026 16:27:14 Europe/Berlin] === LOAN PAYMENT REQUEST ===
+[09-Sep-2026 16:27:14 Europe/Berlin] Method: OPTIONS
+[09-Sep-2026 16:27:14 Europe/Berlin] Input: 
+[09-Sep-2026 16:27:14 Europe/Berlin] === LOAN PAYMENT REQUEST ===
+[09-Sep-2026 16:27:14 Europe/Berlin] Method: POST
+[09-Sep-2026 16:27:14 Europe/Berlin] Input: Array
+(
+    [loan_id] => 4
+    [user_id] => 35
+    [amount] => 30000
+    [payment_date] => 2026-09-09 14:27:14
+    [note] => Payment for loan #4
+)
+
+[09-Sep-2026 16:27:14 Europe/Berlin] Payment Request - Loan ID: 4, User ID: 35, Amount: 30000
+[09-Sep-2026 16:27:14 Europe/Berlin] Loan found: Array
+(
+    [id] => 4
+    [user_id] => 35
+    [amount] => 30000.00
+    [interest] => 0.00
+    [total_payable] => 30000.00
+    [duration_months] => 6
+    [monthly_payment] => 5000.00
+    [status] => approved
+    [request_date] => 2026-09-09 14:25:26
+    [approval_date] => 2026-09-09 15:26:01
+    [completion_date] => 
+    [updated_at] => 2026-09-09 15:26:01
+    [total_paid] => 0.00
+)
+
+[09-Sep-2026 16:27:14 Europe/Berlin] Total paid: 30000, Remaining: 0
+[09-Sep-2026 16:27:43 Europe/Berlin] === LOAN PAYMENT REQUEST ===
+[09-Sep-2026 16:27:43 Europe/Berlin] Method: OPTIONS
+[09-Sep-2026 16:27:43 Europe/Berlin] Input: 
+[09-Sep-2026 16:27:43 Europe/Berlin] === LOAN PAYMENT REQUEST ===
+[09-Sep-2026 16:27:43 Europe/Berlin] Method: POST
+[09-Sep-2026 16:27:43 Europe/Berlin] Input: Array
+(
+    [loan_id] => 4
+    [user_id] => 35
+    [amount] => 10000
+    [payment_date] => 2026-09-09 14:27:43
+    [note] => Payment for loan #4
+)
+
+[09-Sep-2026 16:27:43 Europe/Berlin] Payment Request - Loan ID: 4, User ID: 35, Amount: 10000
+[09-Sep-2026 16:27:43 Europe/Berlin] Loan found: Array
+(
+    [id] => 4
+    [user_id] => 35
+    [amount] => 30000.00
+    [interest] => 0.00
+    [total_payable] => 30000.00
+    [duration_months] => 6
+    [monthly_payment] => 5000.00
+    [status] => approved
+    [request_date] => 2026-09-09 14:25:26
+    [approval_date] => 2026-09-09 15:26:01
+    [completion_date] => 
+    [updated_at] => 2026-09-09 15:26:01
+    [total_paid] => 0.00
+)
+
+[09-Sep-2026 16:27:43 Europe/Berlin] Total paid: 10000, Remaining: 20000
+[09-Sep-2026 16:27:43 Europe/Berlin] Balance update affected 1 rows
+[09-Sep-2026 16:27:43 Europe/Berlin] Payment record inserted with ID: 5
+[09-Sep-2026 16:27:43 Europe/Berlin] Loan total_paid updated to: 10000
+[09-Sep-2026 16:27:43 Europe/Berlin] New remaining: 20000
+[09-Sep-2026 16:27:43 Europe/Berlin] New balance: 220000.00
+[09-Sep-2026 16:28:13 Europe/Berlin] === LOAN PAYMENT REQUEST ===
+[09-Sep-2026 16:28:13 Europe/Berlin] Method: OPTIONS
+[09-Sep-2026 16:28:13 Europe/Berlin] Input: 
+[09-Sep-2026 16:28:13 Europe/Berlin] === LOAN PAYMENT REQUEST ===
+[09-Sep-2026 16:28:13 Europe/Berlin] Method: POST
+[09-Sep-2026 16:28:13 Europe/Berlin] Input: Array
+(
+    [loan_id] => 4
+    [user_id] => 35
+    [amount] => 20000
+    [payment_date] => 2026-09-09 14:28:13
+    [note] => Payment for loan #4
+)
+
+[09-Sep-2026 16:28:13 Europe/Berlin] Payment Request - Loan ID: 4, User ID: 35, Amount: 20000
+[09-Sep-2026 16:28:13 Europe/Berlin] Loan found: Array
+(
+    [id] => 4
+    [user_id] => 35
+    [amount] => 30000.00
+    [interest] => 0.00
+    [total_payable] => 30000.00
+    [duration_months] => 6
+    [monthly_payment] => 5000.00
+    [status] => approved
+    [request_date] => 2026-09-09 14:25:26
+    [approval_date] => 2026-09-09 15:26:01
+    [completion_date] => 
+    [updated_at] => 2026-09-09 15:27:43
+    [total_paid] => 10000.00
+)
+
+[09-Sep-2026 16:28:13 Europe/Berlin] Total paid: 30000, Remaining: 0
+[09-Sep-2026 16:28:26 Europe/Berlin] === LOAN PAYMENT REQUEST ===
+[09-Sep-2026 16:28:26 Europe/Berlin] Method: OPTIONS
+[09-Sep-2026 16:28:26 Europe/Berlin] Input: 
+[09-Sep-2026 16:28:26 Europe/Berlin] === LOAN PAYMENT REQUEST ===
+[09-Sep-2026 16:28:26 Europe/Berlin] Method: POST
+[09-Sep-2026 16:28:26 Europe/Berlin] Input: Array
+(
+    [loan_id] => 4
+    [user_id] => 35
+    [amount] => 10000
+    [payment_date] => 2026-09-09 14:28:26
+    [note] => Payment for loan #4
+)
+
+[09-Sep-2026 16:28:26 Europe/Berlin] Payment Request - Loan ID: 4, User ID: 35, Amount: 10000
+[09-Sep-2026 16:28:26 Europe/Berlin] Loan found: Array
+(
+    [id] => 4
+    [user_id] => 35
+    [amount] => 30000.00
+    [interest] => 0.00
+    [total_payable] => 30000.00
+    [duration_months] => 6
+    [monthly_payment] => 5000.00
+    [status] => approved
+    [request_date] => 2026-09-09 14:25:26
+    [approval_date] => 2026-09-09 15:26:01
+    [completion_date] => 
+    [updated_at] => 2026-09-09 15:27:43
+    [total_paid] => 10000.00
+)
+
+[09-Sep-2026 16:28:26 Europe/Berlin] Total paid: 20000, Remaining: 10000
+[09-Sep-2026 16:28:26 Europe/Berlin] Balance update affected 1 rows
+[09-Sep-2026 16:28:26 Europe/Berlin] Payment record inserted with ID: 6
+[09-Sep-2026 16:28:26 Europe/Berlin] Loan total_paid updated to: 20000
+[09-Sep-2026 16:28:26 Europe/Berlin] New remaining: 10000
+[09-Sep-2026 16:28:26 Europe/Berlin] New balance: 210000.00
+[09-Sep-2026 16:28:42 Europe/Berlin] === LOAN PAYMENT REQUEST ===
+[09-Sep-2026 16:28:42 Europe/Berlin] Method: OPTIONS
+[09-Sep-2026 16:28:42 Europe/Berlin] Input: 
+[09-Sep-2026 16:28:42 Europe/Berlin] === LOAN PAYMENT REQUEST ===
+[09-Sep-2026 16:28:42 Europe/Berlin] Method: POST
+[09-Sep-2026 16:28:42 Europe/Berlin] Input: Array
+(
+    [loan_id] => 4
+    [user_id] => 35
+    [amount] => 10000
+    [payment_date] => 2026-09-09 14:28:42
+    [note] => Payment for loan #4
+)
+
+[09-Sep-2026 16:28:42 Europe/Berlin] Payment Request - Loan ID: 4, User ID: 35, Amount: 10000
+[09-Sep-2026 16:28:42 Europe/Berlin] Loan found: Array
+(
+    [id] => 4
+    [user_id] => 35
+    [amount] => 30000.00
+    [interest] => 0.00
+    [total_payable] => 30000.00
+    [duration_months] => 6
+    [monthly_payment] => 5000.00
+    [status] => approved
+    [request_date] => 2026-09-09 14:25:26
+    [approval_date] => 2026-09-09 15:26:01
+    [completion_date] => 
+    [updated_at] => 2026-09-09 15:28:26
+    [total_paid] => 20000.00
+)
+
+[09-Sep-2026 16:28:42 Europe/Berlin] Total paid: 30000, Remaining: 0
+[09-Sep-2026 16:28:52 Europe/Berlin] === LOAN PAYMENT REQUEST ===
+[09-Sep-2026 16:28:52 Europe/Berlin] Method: OPTIONS
+[09-Sep-2026 16:28:52 Europe/Berlin] Input: 
+[09-Sep-2026 16:28:52 Europe/Berlin] === LOAN PAYMENT REQUEST ===
+[09-Sep-2026 16:28:52 Europe/Berlin] Method: POST
+[09-Sep-2026 16:28:52 Europe/Berlin] Input: Array
+(
+    [loan_id] => 4
+    [user_id] => 35
+    [amount] => 10000
+    [payment_date] => 2026-09-09 14:28:52
+    [note] => Payment for loan #4
+)
+
+[09-Sep-2026 16:28:52 Europe/Berlin] Payment Request - Loan ID: 4, User ID: 35, Amount: 10000
+[09-Sep-2026 16:28:52 Europe/Berlin] Loan found: Array
+(
+    [id] => 4
+    [user_id] => 35
+    [amount] => 30000.00
+    [interest] => 0.00
+    [total_payable] => 30000.00
+    [duration_months] => 6
+    [monthly_payment] => 5000.00
+    [status] => approved
+    [request_date] => 2026-09-09 14:25:26
+    [approval_date] => 2026-09-09 15:26:01
+    [completion_date] => 
+    [updated_at] => 2026-09-09 15:28:26
+    [total_paid] => 20000.00
+)
+
+[09-Sep-2026 16:28:52 Europe/Berlin] Total paid: 30000, Remaining: 0
+[09-Sep-2026 16:32:11 Europe/Berlin] === LOAN PAYMENT REQUEST ===
+[09-Sep-2026 16:32:11 Europe/Berlin] Method: OPTIONS
+[09-Sep-2026 16:32:11 Europe/Berlin] Input: 
+[09-Sep-2026 16:32:12 Europe/Berlin] === LOAN PAYMENT REQUEST ===
+[09-Sep-2026 16:32:12 Europe/Berlin] Method: POST
+[09-Sep-2026 16:32:12 Europe/Berlin] Input: Array
+(
+    [loan_id] => 4
+    [user_id] => 35
+    [amount] => 10000
+    [payment_date] => 2026-09-09 14:32:11
+    [note] => Payment for loan #4
+)
+
+[09-Sep-2026 16:32:12 Europe/Berlin] Payment Request - Loan ID: 4, User ID: 35, Amount: 10000
+[09-Sep-2026 16:32:12 Europe/Berlin] Loan found: Array
+(
+    [id] => 4
+    [user_id] => 35
+    [amount] => 30000.00
+    [interest] => 0.00
+    [total_payable] => 30000.00
+    [duration_months] => 6
+    [monthly_payment] => 5000.00
+    [status] => approved
+    [request_date] => 2026-09-09 14:25:26
+    [approval_date] => 2026-09-09 15:26:01
+    [completion_date] => 
+    [updated_at] => 2026-09-09 15:28:26
+    [total_paid] => 20000.00
+)
+
+[09-Sep-2026 16:32:12 Europe/Berlin] Total paid: 30000, Remaining: 0
+[09-Sep-2026 16:32:29 Europe/Berlin] === LOAN PAYMENT REQUEST ===
+[09-Sep-2026 16:32:29 Europe/Berlin] Method: OPTIONS
+[09-Sep-2026 16:32:29 Europe/Berlin] Input: 
+[09-Sep-2026 16:32:29 Europe/Berlin] === LOAN PAYMENT REQUEST ===
+[09-Sep-2026 16:32:29 Europe/Berlin] Method: POST
+[09-Sep-2026 16:32:29 Europe/Berlin] Input: Array
+(
+    [loan_id] => 4
+    [user_id] => 35
+    [amount] => 10000
+    [payment_date] => 2026-09-09 14:32:29
+    [note] => Payment for loan #4
+)
+
+[09-Sep-2026 16:32:29 Europe/Berlin] Payment Request - Loan ID: 4, User ID: 35, Amount: 10000
+[09-Sep-2026 16:32:29 Europe/Berlin] Loan found: Array
+(
+    [id] => 4
+    [user_id] => 35
+    [amount] => 30000.00
+    [interest] => 0.00
+    [total_payable] => 30000.00
+    [duration_months] => 6
+    [monthly_payment] => 5000.00
+    [status] => approved
+    [request_date] => 2026-09-09 14:25:26
+    [approval_date] => 2026-09-09 15:26:01
+    [completion_date] => 
+    [updated_at] => 2026-09-09 15:28:26
+    [total_paid] => 20000.00
+)
+
+[09-Sep-2026 16:32:29 Europe/Berlin] Total paid: 30000, Remaining: 0
+[09-Sep-2026 16:34:38 Europe/Berlin] === LOAN PAYMENT REQUEST ===
+[09-Sep-2026 16:34:38 Europe/Berlin] Method: OPTIONS
+[09-Sep-2026 16:34:38 Europe/Berlin] Input: 
+[09-Sep-2026 16:34:38 Europe/Berlin] === LOAN PAYMENT REQUEST ===
+[09-Sep-2026 16:34:38 Europe/Berlin] Method: POST
+[09-Sep-2026 16:34:38 Europe/Berlin] Input: Array
+(
+    [loan_id] => 4
+    [user_id] => 35
+    [amount] => 10000
+    [payment_date] => 2026-09-09 14:34:38
+    [note] => Payment for loan #4
+)
+
+[09-Sep-2026 16:34:38 Europe/Berlin] Payment Request - Loan ID: 4, User ID: 35, Amount: 10000
+[09-Sep-2026 16:34:38 Europe/Berlin] Loan found: Array
+(
+    [id] => 4
+    [user_id] => 35
+    [amount] => 30000.00
+    [interest] => 0.00
+    [total_payable] => 30000.00
+    [duration_months] => 6
+    [monthly_payment] => 5000.00
+    [status] => approved
+    [request_date] => 2026-09-09 14:25:26
+    [approval_date] => 2026-09-09 15:26:01
+    [completion_date] => 
+    [updated_at] => 2026-09-09 15:28:26
+    [total_paid] => 20000.00
+)
+
+[09-Sep-2026 16:34:38 Europe/Berlin] Current total paid: 20000
+[09-Sep-2026 16:34:38 Europe/Berlin] Total payable: 30000
+[09-Sep-2026 16:34:38 Europe/Berlin] Remaining: 10000
+[09-Sep-2026 16:34:38 Europe/Berlin] New payment amount: 10000
+[09-Sep-2026 16:34:38 Europe/Berlin] Balance update affected 1 rows
+[09-Sep-2026 16:34:38 Europe/Berlin] Payment record inserted with ID: 7
+[09-Sep-2026 16:34:38 Europe/Berlin] Loan total_paid updated from 20000 to 30000
+[09-Sep-2026 16:34:38 Europe/Berlin] New remaining: 0
+[09-Sep-2026 16:34:38 Europe/Berlin] Loan status updated to completed
+[09-Sep-2026 16:34:38 Europe/Berlin] New balance: 200000.00
