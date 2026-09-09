@@ -58,6 +58,34 @@ if ($method === 'GET') {
             $result[$setting['setting_key']] = json_decode($setting['setting_value'], true);
         }
         
+        // If loan settings don't exist, add default values
+        if (!isset($result['loan'])) {
+            $result['loan'] = [
+                'min_membership_days' => 180,
+                'max_borrow_percentage' => 50,
+                'interest_rate' => 5,
+                'max_duration_months' => 6,
+                'min_loan_amount' => 100,
+                'max_loan_amount' => 1000000,
+                'enable_loan_requests' => true,
+                'require_admin_approval' => true,
+                'auto_approve_small_loans' => false,
+                'small_loan_threshold' => 5000,
+                'late_payment_penalty' => 10,
+                'grace_period_days' => 7
+            ];
+            
+            // Insert default loan settings into database
+            $defaultLoanJson = json_encode($result['loan']);
+            $insertStmt = $db->prepare("
+                INSERT INTO settings (setting_key, setting_value) 
+                VALUES ('loan', ?) 
+                ON DUPLICATE KEY UPDATE setting_value = ?
+            ");
+            $insertStmt->execute([$defaultLoanJson, $defaultLoanJson]);
+            $insertStmt->close();
+        }
+        
         echo json_encode(['status' => true, 'data' => $result]);
     } catch (Exception $e) {
         http_response_code(500);
@@ -78,8 +106,8 @@ if ($method === 'POST') {
             exit();
         }
         
-        // Validate data structure
-        $allowedKeys = ['general', 'contribution', 'commission', 'payment', 'discount', 'security', 'suspension'];
+        // Validate data structure - ADDED 'loan' to allowed keys
+        $allowedKeys = ['general', 'contribution', 'commission', 'payment', 'discount', 'security', 'suspension', 'loan'];
         $invalidKeys = array_diff(array_keys($data), $allowedKeys);
         
         if (!empty($invalidKeys)) {
@@ -137,8 +165,8 @@ if ($method === 'PUT') {
         $key = $data['key'];
         $value = $data['value'];
         
-        // Validate key
-        $allowedKeys = ['general', 'contribution', 'commission', 'payment', 'discount', 'security', 'suspension'];
+        // Validate key - ADDED 'loan'
+        $allowedKeys = ['general', 'contribution', 'commission', 'payment', 'discount', 'security', 'suspension', 'loan'];
         if (!in_array($key, $allowedKeys)) {
             http_response_code(400);
             echo json_encode(['error' => 'Invalid setting key']);

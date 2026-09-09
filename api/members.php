@@ -1,7 +1,14 @@
 <?php
 // api/members.php
 error_reporting(E_ALL);
-ini_set('display_errors', 1);
+ini_set('display_errors', 0);
+ini_set('log_errors', 1);
+ini_set('error_log', __DIR__ . '/error.log');
+
+// Clean any output buffers
+while (ob_get_level()) {
+    ob_end_clean();
+}
 
 header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS");
@@ -17,7 +24,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 header("Content-Type: application/json; charset=UTF-8");
 
 require_once __DIR__ . '/config/database.php';
-$db = getDBConnection();
+
+try {
+    $db = getDBConnection();
+} catch (Exception $e) {
+    http_response_code(500);
+    echo json_encode(['error' => 'Database connection failed: ' . $e->getMessage()]);
+    exit();
+}
 
 if (!$db) {
     http_response_code(500);
@@ -48,7 +62,13 @@ switch ($method) {
         break;
         
     case 'POST':
-        createMember($db);
+        $input = file_get_contents('php://input');
+        $data = json_decode($input, true);
+        if (isset($data['action']) && isset($data['userIds'])) {
+            bulkAction($db);
+        } else {
+            createMember($db);
+        }
         break;
         
     case 'PUT':
@@ -139,6 +159,10 @@ function getMember($db, $id) {
     }
 }
 
+function startsWith($haystack, $needle) {
+    return substr($haystack, 0, strlen($needle)) === $needle;
+}
+
 function createMember($db) {
     try {
         $input = file_get_contents('php://input');
@@ -154,71 +178,135 @@ function createMember($db) {
         $name = $data['name'] ?? null;
         $email = $data['email'] ?? null;
         $password = $data['password'] ?? null;
+        $phone = $data['phone'] ?? null;
+        $role = $data['role'] ?? 'member';
         
-        if (!$accountNumber) {
+        if (!$accountNumber || !$name || !$email || !$password) {
             http_response_code(400);
-            echo json_encode(['error' => 'Missing required field: accountNumber']);
+            echo json_encode(['error' => 'Missing required fields']);
             return;
         }
         
-        if (!$name) {
-            http_response_code(400);
-            echo json_encode(['error' => 'Missing required field: name']);
+        // Validate phone
+        if ($phone && !empty($phone)) {
+            $cleaned = preg_replace('/\D/', '', $phone);
+            if (strlen($cleaned) !== 11) {
+                http_response_code(400);
+                echo json_encode(['error' => 'Phone must be 11 digits']);
+                return;
+            }
+            if (!startsWith($cleaned, '0')) {
+                http_response_code(400);
+                echo json_encode(['error' => 'Phone must start with 0']);
+                return;
+            }
+            $phone = $cleaned;
+        }
+        
+        // Check duplicates
+        $checkStmt = $db->prepare("SELECT id FROM members WHERE email = ?");
+        $checkStmt->execute([$email]);
+        if ($checkStmt->rowCount() > 0) {
+            http_response_code(409);
+            echo json_encode(['error' => 'Email already exists']);
             return;
         }
         
-        if (!$email) {
-            http_response_code(400);
-            echo json_encode(['error' => 'Missing required field: email']);
-            return;
+        if ($phone) {
+            $phoneCheckStmt = $db->prepare("SELECT id FROM members WHERE phone = ?");
+            $phoneCheckStmt->execute([$phone]);
+            if ($phoneCheckStmt->rowCount() > 0) {
+                http_response_code(409);
+                echo json_encode(['error' => 'Phone already exists']);
+                return;
+            }
         }
         
-        $phone = $data['phone'] ?? '';
         $membershipType = $data['membershipType'] ?? $data['membership_type'] ?? 'Standard';
         $joinDate = $data['joinDate'] ?? $data['join_date'] ?? date('Y-m-d');
         $status = $data['status'] ?? 'Active';
         $balance = floatval($data['balance'] ?? 0);
-        $role = $data['role'] ?? 'member';
         
-        $hashedPassword = $password ? password_hash($password, PASSWORD_DEFAULT) : password_hash('password123', PASSWORD_DEFAULT);
+        $hashedPassword = password_hash($password, PASSWORD_DEFAULT);
         
-        $stmt = $db->prepare("
-            INSERT INTO members (account_number, name, email, phone, membership_type, join_date, status, balance, role, password)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ");
+        $db->beginTransaction();
         
-        $result = $stmt->execute([
-            $accountNumber,
-            $name,
-            $email,
-            $phone,
-            $membershipType,
-            $joinDate,
-            $status,
-            $balance,
-            $role,
-            $hashedPassword
-        ]);
-        
-        if ($result) {
+        try {
+            $stmt = $db->prepare("
+                INSERT INTO members (account_number, name, email, phone, membership_type, join_date, status, balance, role, password)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ");
+            
+            $result = $stmt->execute([
+                $accountNumber, $name, $email, $phone, $membershipType,
+                $joinDate, $status, $balance, $role, $hashedPassword
+            ]);
+            
+            if (!$result) {
+                throw new Exception('Failed to insert member');
+            }
+            
             $id = $db->lastInsertId();
-            $data['id'] = $id;
+            
+            // If admin, add to admins table
+            if ($role === 'admin' || $role === 'administrator') {
+                $tableCheck = $db->query("SHOW TABLES LIKE 'admins'");
+                if ($tableCheck->rowCount() > 0) {
+                    $insertAdmin = $db->prepare("
+                        INSERT INTO admins (username, email, password, role, phone, full_name, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, NOW())
+                    ");
+                    $insertAdmin->execute([
+                        $name, $email, $hashedPassword, $role, $phone, $name
+                    ]);
+                }
+            }
+            
+            $db->commit();
+            
+            $stmt = $db->prepare("SELECT * FROM members WHERE id = ?");
+            $stmt->execute([$id]);
+            $newUser = $stmt->fetch(PDO::FETCH_ASSOC);
+            
+            $formatted = [
+                'id' => $newUser['id'],
+                'accountNumber' => $newUser['account_number'] ?? 'N/A',
+                'name' => $newUser['name'] ?? 'Unknown',
+                'email' => $newUser['email'] ?? '',
+                'phone' => $newUser['phone'] ?? '',
+                'membershipType' => $newUser['membership_type'] ?? 'Standard',
+                'joinDate' => $newUser['join_date'] ?? date('Y-m-d'),
+                'status' => $newUser['status'] ?? 'Active',
+                'balance' => floatval($newUser['balance'] ?? 0),
+                'role' => $newUser['role'] ?? 'member'
+            ];
             
             http_response_code(201);
-            echo json_encode(['member' => $data]);
-        } else {
-            http_response_code(500);
-            echo json_encode(['error' => 'Failed to insert member']);
+            echo json_encode(['member' => $formatted]);
+            
+        } catch (Exception $e) {
+            $db->rollBack();
+            throw $e;
         }
+        
     } catch (PDOException $e) {
+        if ($db && $db->inTransaction()) {
+            $db->rollBack();
+        }
         http_response_code(500);
         echo json_encode(['error' => 'Database error: ' . $e->getMessage()]);
     } catch (Exception $e) {
+        if ($db && $db->inTransaction()) {
+            $db->rollBack();
+        }
         http_response_code(500);
         echo json_encode(['error' => 'Error: ' . $e->getMessage()]);
     }
 }
 
+// ============================================================
+// FIXED: updateMember - PROPERLY syncs admin users
+// ============================================================
 function updateMember($db, $id) {
     try {
         $input = file_get_contents('php://input');
@@ -230,10 +318,7 @@ function updateMember($db, $id) {
             return;
         }
         
-        // Check if password is provided
-        $hasPassword = !empty($data['password']);
-        
-        // First, get current user data to preserve fields not being updated
+        // Get current user
         $stmt = $db->prepare("SELECT * FROM members WHERE id = ?");
         $stmt->execute([$id]);
         $currentUser = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -244,39 +329,61 @@ function updateMember($db, $id) {
             return;
         }
         
-        // Build update query dynamically
+        // Check email uniqueness
+        if (isset($data['email']) && !empty($data['email']) && $data['email'] !== $currentUser['email']) {
+            $emailCheckStmt = $db->prepare("SELECT id FROM members WHERE email = ? AND id != ?");
+            $emailCheckStmt->execute([$data['email'], $id]);
+            if ($emailCheckStmt->rowCount() > 0) {
+                http_response_code(409);
+                echo json_encode(['error' => 'Email already exists']);
+                return;
+            }
+        }
+        
+        // Validate phone
+        if (isset($data['phone']) && !empty($data['phone'])) {
+            $cleaned = preg_replace('/\D/', '', $data['phone']);
+            if (strlen($cleaned) !== 11) {
+                http_response_code(400);
+                echo json_encode(['error' => 'Phone must be 11 digits']);
+                return;
+            }
+            if (!startsWith($cleaned, '0')) {
+                http_response_code(400);
+                echo json_encode(['error' => 'Phone must start with 0']);
+                return;
+            }
+            $data['phone'] = $cleaned;
+            
+            if ($data['phone'] !== ($currentUser['phone'] ?? '')) {
+                $phoneCheckStmt = $db->prepare("SELECT id FROM members WHERE phone = ? AND id != ?");
+                $phoneCheckStmt->execute([$data['phone'], $id]);
+                if ($phoneCheckStmt->rowCount() > 0) {
+                    http_response_code(409);
+                    echo json_encode(['error' => 'Phone already exists']);
+                    return;
+                }
+            }
+        }
+        
+        // Build update query
         $updateFields = [];
         $params = [];
+        $hashedPassword = null;
         
-        // Always update these fields if provided
         if (isset($data['name']) && !empty($data['name'])) {
             $updateFields[] = "name = ?";
             $params[] = $data['name'];
-        } else {
-            $updateFields[] = "name = ?";
-            $params[] = $currentUser['name'];
         }
         
         if (isset($data['email']) && !empty($data['email'])) {
             $updateFields[] = "email = ?";
             $params[] = $data['email'];
-        } else {
-            $updateFields[] = "email = ?";
-            $params[] = $currentUser['email'];
         }
         
         if (isset($data['phone'])) {
             $updateFields[] = "phone = ?";
-            $params[] = $data['phone'];
-        } else {
-            $updateFields[] = "phone = ?";
-            $params[] = $currentUser['phone'] ?? '';
-        }
-        
-        if (isset($data['membershipType']) || isset($data['membership_type'])) {
-            $membershipType = $data['membershipType'] ?? $data['membership_type'] ?? 'Standard';
-            $updateFields[] = "membership_type = ?";
-            $params[] = $membershipType;
+            $params[] = empty($data['phone']) ? null : $data['phone'];
         }
         
         if (isset($data['status'])) {
@@ -289,28 +396,110 @@ function updateMember($db, $id) {
             $params[] = floatval($data['balance']);
         }
         
+        $oldRole = $currentUser['role'];
+        $newRole = isset($data['role']) ? $data['role'] : $oldRole;
+        
         if (isset($data['role'])) {
             $updateFields[] = "role = ?";
             $params[] = $data['role'];
         }
         
-        // Update password if provided
-        if ($hasPassword) {
+        // Hash password if provided
+        if (isset($data['password']) && !empty($data['password'])) {
             $hashedPassword = password_hash($data['password'], PASSWORD_DEFAULT);
             $updateFields[] = "password = ?";
             $params[] = $hashedPassword;
         }
         
-        // Add ID to params
+        if (empty($updateFields)) {
+            http_response_code(400);
+            echo json_encode(['error' => 'No fields to update']);
+            return;
+        }
+        
         $params[] = $id;
         
-        // Build and execute query
-        $sql = "UPDATE members SET " . implode(", ", $updateFields) . " WHERE id = ?";
-        $stmt = $db->prepare($sql);
-        $result = $stmt->execute($params);
+        $db->beginTransaction();
         
-        if ($result) {
-            // Fetch updated user
+        try {
+            // Update members table
+            $sql = "UPDATE members SET " . implode(", ", $updateFields) . " WHERE id = ?";
+            $stmt = $db->prepare($sql);
+            $result = $stmt->execute($params);
+            
+            if (!$result) {
+                throw new Exception('Failed to update member');
+            }
+            
+            // ============================================================
+            // CRITICAL: Sync with admins table
+            // ============================================================
+            $userName = $data['name'] ?? $currentUser['name'];
+            $userEmail = $data['email'] ?? $currentUser['email'];
+            $userPhone = isset($data['phone']) ? $data['phone'] : $currentUser['phone'];
+            
+            // Get the password from the database (after update)
+            $refreshStmt = $db->prepare("SELECT password FROM members WHERE id = ?");
+            $refreshStmt->execute([$id]);
+            $updatedMember = $refreshStmt->fetch(PDO::FETCH_ASSOC);
+            $userPassword = $updatedMember['password'];
+            
+            $tableCheck = $db->query("SHOW TABLES LIKE 'admins'");
+            $adminsTableExists = $tableCheck->rowCount() > 0;
+            
+            if ($adminsTableExists) {
+                // CASE: User is being set to admin
+                if ($newRole === 'admin' || $newRole === 'administrator') {
+                    $checkAdmin = $db->prepare("SELECT id FROM admins WHERE email = ?");
+                    $checkAdmin->execute([$userEmail]);
+                    
+                    if ($checkAdmin->rowCount() > 0) {
+                        // UPDATE existing admin with the SAME password
+                        $updateAdmin = $db->prepare("
+                            UPDATE admins 
+                            SET username = ?, 
+                                full_name = ?, 
+                                phone = ?, 
+                                password = ?,
+                                role = ?
+                            WHERE email = ?
+                        ");
+                        $updateAdmin->execute([
+                            $userName,
+                            $userName,
+                            $userPhone,
+                            $userPassword,
+                            $newRole,
+                            $userEmail
+                        ]);
+                    } else {
+                        // INSERT new admin with the SAME password
+                        $insertAdmin = $db->prepare("
+                            INSERT INTO admins (username, email, password, role, phone, full_name, created_at)
+                            VALUES (?, ?, ?, ?, ?, ?, NOW())
+                        ");
+                        $insertAdmin->execute([
+                            $userName,
+                            $userEmail,
+                            $userPassword,
+                            $newRole,
+                            $userPhone,
+                            $userName
+                        ]);
+                    }
+                    $checkAdmin->close();
+                } 
+                // CASE: User was admin but now role changed to something else
+                else if (($oldRole === 'admin' || $oldRole === 'administrator') && 
+                         ($newRole !== 'admin' && $newRole !== 'administrator')) {
+                    $deleteAdmin = $db->prepare("DELETE FROM admins WHERE email = ?");
+                    $deleteAdmin->execute([$userEmail]);
+                }
+            }
+            
+            $db->commit();
+            
+            // Return updated user
             $stmt = $db->prepare("SELECT * FROM members WHERE id = ?");
             $stmt->execute([$id]);
             $updatedUser = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -328,15 +517,27 @@ function updateMember($db, $id) {
                 'role' => $updatedUser['role'] ?? 'member'
             ];
             
-            echo json_encode(['member' => $formatted]);
-        } else {
-            http_response_code(500);
-            echo json_encode(['error' => 'Failed to update member']);
+            echo json_encode([
+                'success' => true,
+                'message' => 'Member updated successfully',
+                'member' => $formatted
+            ]);
+            
+        } catch (Exception $e) {
+            $db->rollBack();
+            throw $e;
         }
+        
     } catch (PDOException $e) {
+        if ($db && $db->inTransaction()) {
+            $db->rollBack();
+        }
         http_response_code(500);
         echo json_encode(['error' => 'Database error: ' . $e->getMessage()]);
     } catch (Exception $e) {
+        if ($db && $db->inTransaction()) {
+            $db->rollBack();
+        }
         http_response_code(500);
         echo json_encode(['error' => 'Error: ' . $e->getMessage()]);
     }
@@ -344,13 +545,150 @@ function updateMember($db, $id) {
 
 function deleteMember($db, $id) {
     try {
-        $stmt = $db->prepare("DELETE FROM members WHERE id = ?");
+        $stmt = $db->prepare("SELECT * FROM members WHERE id = ?");
         $stmt->execute([$id]);
+        $user = $stmt->fetch(PDO::FETCH_ASSOC);
         
-        echo json_encode(['message' => 'Member deleted successfully']);
+        if (!$user) {
+            http_response_code(404);
+            echo json_encode(['error' => 'Member not found']);
+            return;
+        }
+        
+        $db->beginTransaction();
+        
+        try {
+            $tableCheck = $db->query("SHOW TABLES LIKE 'admins'");
+            $adminsTableExists = $tableCheck->rowCount() > 0;
+            
+            if ($adminsTableExists && ($user['role'] === 'admin' || $user['role'] === 'administrator')) {
+                $deleteAdmin = $db->prepare("DELETE FROM admins WHERE email = ?");
+                $deleteAdmin->execute([$user['email']]);
+            }
+            
+            $stmt = $db->prepare("DELETE FROM members WHERE id = ?");
+            $stmt->execute([$id]);
+            
+            $db->commit();
+            
+            echo json_encode([
+                'success' => true,
+                'message' => 'Member deleted successfully'
+            ]);
+            
+        } catch (Exception $e) {
+            $db->rollBack();
+            throw $e;
+        }
+        
     } catch (Exception $e) {
+        if ($db && $db->inTransaction()) {
+            $db->rollBack();
+        }
         http_response_code(500);
         echo json_encode(['error' => 'Failed to delete member: ' . $e->getMessage()]);
+    }
+}
+
+function bulkAction($db) {
+    try {
+        $input = file_get_contents('php://input');
+        $data = json_decode($input, true);
+        
+        if (!$data || !isset($data['userIds']) || !isset($data['action'])) {
+            http_response_code(400);
+            echo json_encode(['error' => 'Invalid request']);
+            return;
+        }
+        
+        $userIds = $data['userIds'];
+        $action = $data['action'];
+        
+        if (empty($userIds)) {
+            http_response_code(400);
+            echo json_encode(['error' => 'No users selected']);
+            return;
+        }
+        
+        $placeholders = implode(',', array_fill(0, count($userIds), '?'));
+        
+        $db->beginTransaction();
+        
+        try {
+            switch ($action) {
+                case 'activate':
+                    $sql = "UPDATE members SET status = 'Active' WHERE id IN ($placeholders)";
+                    $stmt = $db->prepare($sql);
+                    $result = $stmt->execute($userIds);
+                    $actionMessage = 'activated';
+                    break;
+                    
+                case 'suspend':
+                    $sql = "UPDATE members SET status = 'Suspended' WHERE id IN ($placeholders)";
+                    $stmt = $db->prepare($sql);
+                    $result = $stmt->execute($userIds);
+                    $actionMessage = 'suspended';
+                    break;
+                    
+                case 'delete':
+                    $getUsers = $db->prepare("SELECT * FROM members WHERE id IN ($placeholders)");
+                    $getUsers->execute($userIds);
+                    $usersToDelete = $getUsers->fetchAll(PDO::FETCH_ASSOC);
+                    
+                    $tableCheck = $db->query("SHOW TABLES LIKE 'admins'");
+                    $adminsTableExists = $tableCheck->rowCount() > 0;
+                    
+                    if ($adminsTableExists) {
+                        foreach ($usersToDelete as $user) {
+                            if ($user['role'] === 'admin' || $user['role'] === 'administrator') {
+                                $deleteAdmin = $db->prepare("DELETE FROM admins WHERE email = ?");
+                                $deleteAdmin->execute([$user['email']]);
+                            }
+                        }
+                    }
+                    
+                    $sql = "DELETE FROM members WHERE id IN ($placeholders)";
+                    $stmt = $db->prepare($sql);
+                    $result = $stmt->execute($userIds);
+                    $actionMessage = 'deleted';
+                    break;
+                    
+                default:
+                    http_response_code(400);
+                    echo json_encode(['error' => 'Invalid action']);
+                    return;
+            }
+            
+            if ($result) {
+                $count = $stmt->rowCount();
+                $db->commit();
+                echo json_encode([
+                    'success' => true,
+                    'message' => "$count user(s) $actionMessage successfully"
+                ]);
+            } else {
+                $db->rollBack();
+                http_response_code(500);
+                echo json_encode(['error' => 'Failed to perform bulk action']);
+            }
+            
+        } catch (Exception $e) {
+            $db->rollBack();
+            throw $e;
+        }
+        
+    } catch (PDOException $e) {
+        if ($db && $db->inTransaction()) {
+            $db->rollBack();
+        }
+        http_response_code(500);
+        echo json_encode(['error' => 'Database error: ' . $e->getMessage()]);
+    } catch (Exception $e) {
+        if ($db && $db->inTransaction()) {
+            $db->rollBack();
+        }
+        http_response_code(500);
+        echo json_encode(['error' => 'Error: ' . $e->getMessage()]);
     }
 }
 ?>

@@ -1,0 +1,69 @@
+[08-Sep-2026 07:53:33 Europe/Berlin] Failed to insert into admins table: SQLSTATE[23000]: Integrity constraint violation: 1062 Duplicate entry 'Oremin Ore' for key 'username'
+[08-Sep-2026 12:09:51 Europe/Berlin] Updated admin in admins table: iyami66339@gmail.com
+[08-Sep-2026 12:09:51 Europe/Berlin] PHP Fatal error:  Uncaught Error: Call to undefined method PDOStatement::close() in C:\xampp\htdocs\baleeg\api\members.php:482
+Stack trace:
+#0 C:\xampp\htdocs\baleeg\api\members.php(76): updateMember(Object(PDO), '32')
+#1 {main}
+  thrown in C:\xampp\htdocs\baleeg\api\members.php on line 482
+[08-Sep-2026 12:09:56 Europe/Berlin] Updated admin in admins table: iyami66339@gmail.com
+[08-Sep-2026 12:09:56 Europe/Berlin] PHP Fatal error:  Uncaught Error: Call to undefined method PDOStatement::close() in C:\xampp\htdocs\baleeg\api\members.php:482
+Stack trace:
+#0 C:\xampp\htdocs\baleeg\api\members.php(76): updateMember(Object(PDO), '32')
+#1 {main}
+  thrown in C:\xampp\htdocs\baleeg\api\members.php on line 482
+[08-Sep-2026 12:12:22 Europe/Berlin] Removed admin from admins table: iyami66339@gmail.com
+[08-Sep-2026 12:12:34 Europe/Berlin] Updated admin in admins table: iyami66339@gmail.com
+[08-Sep-2026 12:12:34 Europe/Berlin] PHP Fatal error:  Uncaught Error: Call to undefined method PDOStatement::close() in C:\xampp\htdocs\baleeg\api\members.php:567
+Stack trace:
+#0 C:\xampp\htdocs\baleeg\api\members.php(76): updateMember(Object(PDO), '32')
+#1 {main}
+  thrown in C:\xampp\htdocs\baleeg\api\members.php on line 567
+[08-Sep-2026 12:12:36 Europe/Berlin] Updated admin in admins table: iyami66339@gmail.com
+[08-Sep-2026 12:12:36 Europe/Berlin] PHP Fatal error:  Uncaught Error: Call to undefined method PDOStatement::close() in C:\xampp\htdocs\baleeg\api\members.php:567
+Stack trace:
+#0 C:\xampp\htdocs\baleeg\api\members.php(76): updateMember(Object(PDO), '32')
+#1 {main}
+  thrown in C:\xampp\htdocs\baleeg\api\members.php on line 567
+[08-Sep-2026 12:12:37 Europe/Berlin] Updated admin in admins table: iyami66339@gmail.com
+[08-Sep-2026 12:12:37 Europe/Berlin] PHP Fatal error:  Uncaught Error: Call to undefined method PDOStatement::close() in C:\xampp\htdocs\baleeg\api\members.php:567
+Stack trace:
+#0 C:\xampp\htdocs\baleeg\api\members.php(76): updateMember(Object(PDO), '32')
+#1 {main}
+  thrown in C:\xampp\htdocs\baleeg\api\members.php on line 567
+[08-Sep-2026 12:12:37 Europe/Berlin] Updated admin in admins table: iyami66339@gmail.com
+[08-Sep-2026 12:12:37 Europe/Berlin] PHP Fatal error:  Uncaught Error: Call to undefined method PDOStatement::close() in C:\xampp\htdocs\baleeg\api\members.php:567
+Stack trace:
+#0 C:\xampp\htdocs\baleeg\api\members.php(76): updateMember(Object(PDO), '32')
+#1 {main}
+  thrown in C:\xampp\htdocs\baleeg\api\members.php on line 567
+[08-Sep-2026 12:12:38 Europe/Berlin] Updated admin in admins table: iyami66339@gmail.com
+[08-Sep-2026 12:12:38 Europe/Berlin] PHP Fatal error:  Uncaught Error: Call to undefined method PDOStatement::close() in C:\xampp\htdocs\baleeg\api\members.php:567
+Stack trace:
+#0 C:\xampp\htdocs\baleeg\api\members.php(76): updateMember(Object(PDO), '32')
+#1 {main}
+  thrown in C:\xampp\htdocs\baleeg\api\members.php on line 567
+[08-Sep-2026 12:12:47 Europe/Berlin] Updated admin in admins table: iyami66339@gmail.com
+[08-Sep-2026 12:12:47 Europe/Berlin] PHP Fatal error:  Uncaught Error: Call to undefined method PDOStatement::close() in C:\xampp\htdocs\baleeg\api\members.php:567
+Stack trace:
+#0 C:\xampp\htdocs\baleeg\api\members.php(76): updateMember(Object(PDO), '32')
+#1 {main}
+  thrown in C:\xampp\htdocs\baleeg\api\members.php on line 567
+[08-Sep-2026 12:12:56 Europe/Berlin] Updated admin in admins table: iyami66339@gmail.com
+[08-Sep-2026 12:12:56 Europe/Berlin] PHP Fatal error:  Uncaught Error: Call to undefined method PDOStatement::close() in C:\xampp\htdocs\baleeg\api\members.php:567
+Stack trace:
+#0 C:\xampp\htdocs\baleeg\api\members.php(76): updateMember(Object(PDO), '32')
+#1 {main}
+  thrown in C:\xampp\htdocs\baleeg\api\members.php on line 567
+[08-Sep-2026 12:17:43 Europe/Berlin] Updated admin in admins table: iyami66339@gmail.com
+[08-Sep-2026 12:17:43 Europe/Berlin] PHP Fatal error:  Uncaught Error: Call to undefined method PDOStatement::close() in C:\xampp\htdocs\baleeg\api\members.php:571
+Stack trace:
+#0 C:\xampp\htdocs\baleeg\api\members.php(76): updateMember(Object(PDO), '32')
+#1 {main}
+  thrown in C:\xampp\htdocs\baleeg\api\members.php on line 571
+[08-Sep-2026 12:18:12 Europe/Berlin] Updated admin in admins table: iyami66339@gmail.com
+[08-Sep-2026 12:18:12 Europe/Berlin] PHP Fatal error:  Uncaught Error: Call to undefined method PDOStatement::close() in C:\xampp\htdocs\baleeg\api\members.php:571
+Stack trace:
+#0 C:\xampp\htdocs\baleeg\api\members.php(76): updateMember(Object(PDO), '32')
+#1 {main}
+  thrown in C:\xampp\htdocs\baleeg\api\members.php on line 571
+[08-Sep-2026 12:19:16 Europe/Berlin] Failed to insert into admins table: SQLSTATE[23000]: Integrity constraint violation: 1062 Duplicate entry 'Iyami Babami' for key 'username'
