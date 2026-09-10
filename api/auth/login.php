@@ -1,4 +1,5 @@
 <?php
+
 // api/login.php
 header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With, Accept");
@@ -53,57 +54,45 @@ $result = $stmt->get_result();
 
 if ($result->num_rows > 0) {
     $user = $result->fetch_assoc();
-    
+
     $passwordValid = false;
     $storedPassword = $user['password'];
-    
-    // DEBUG: Log what we're checking
-    error_log("Checking password for admin: " . $email);
-    error_log("Stored password: " . substr($storedPassword, 0, 20) . "...");
-    error_log("Input password: " . $password);
-    
+
     // Check if stored password is hashed (starts with $2y$)
     if (strpos($storedPassword, '$2y$') === 0) {
-        // This is a hashed password - use password_verify
+        // Hashed password — use password_verify
         if (password_verify($password, $storedPassword)) {
             $passwordValid = true;
-            error_log("Password verified with password_verify!");
-        } else {
-            error_log("password_verify failed");
         }
     } else {
-        // This is a plain text password - direct comparison
+        // Plain text password — direct comparison
         if ($password === $storedPassword) {
             $passwordValid = true;
-            error_log("Password matched directly!");
             // Upgrade to hashed password
             $newHash = password_hash($password, PASSWORD_DEFAULT);
             $updateStmt = $conn->prepare("UPDATE admins SET password = ? WHERE id = ?");
             $updateStmt->bind_param("si", $newHash, $user['id']);
             $updateStmt->execute();
             $updateStmt->close();
-            error_log("Password upgraded to hash: " . $newHash);
-        } else {
-            error_log("Direct comparison failed");
         }
     }
-    
+
     if ($passwordValid) {
-        // Get member data if exists
+        // Get member data if exists (for balance/account number)
         $balance = 0;
         $accountNumber = 'ADMIN-' . $user['id'];
         $memberStmt = $conn->prepare("SELECT * FROM members WHERE email = ?");
         $memberStmt->bind_param("s", $email);
         $memberStmt->execute();
         $memberResult = $memberStmt->get_result();
-        
+
         if ($memberResult->num_rows > 0) {
             $member = $memberResult->fetch_assoc();
             $balance = floatval($member['balance'] ?? 0);
             $accountNumber = $member['account_number'] ?? 'ADMIN-' . $user['id'];
         }
         $memberStmt->close();
-        
+
         $userData = [
             'id' => (int)$user['id'],
             'username' => $user['username'] ?? $user['full_name'] ?? 'Admin',
@@ -119,9 +108,9 @@ if ($result->num_rows > 0) {
             'is_active' => 1,
             'isAdmin' => true
         ];
-        
+
         $token = bin2hex(random_bytes(32));
-        
+
         http_response_code(200);
         echo json_encode([
             "status" => true,
@@ -130,8 +119,6 @@ if ($result->num_rows > 0) {
             "token" => $token
         ]);
         exit();
-    } else {
-        error_log("Admin password validation failed for: " . $email);
     }
 }
 $stmt->close();
@@ -147,10 +134,10 @@ $result = $stmt->get_result();
 
 if ($result->num_rows > 0) {
     $user = $result->fetch_assoc();
-    
+
     $passwordValid = false;
     $storedPassword = $user['password'];
-    
+
     // Check if stored password is hashed
     if (strpos($storedPassword, '$2y$') === 0) {
         if (password_verify($password, $storedPassword)) {
@@ -167,7 +154,7 @@ if ($result->num_rows > 0) {
             $updateStmt->close();
         }
     }
-    
+
     if ($passwordValid) {
         // Check status
         if (($user['status'] ?? 'Active') !== 'Active') {
@@ -178,27 +165,30 @@ if ($result->num_rows > 0) {
             ]);
             exit();
         }
-        
+
         $isAdmin = ($user['role'] === 'admin' || $user['role'] === 'administrator');
-        
+
         // If admin, sync to admins table
         if ($isAdmin) {
-            // Get the latest password
+            // Get the latest password (already hashed in members table)
             $refreshStmt = $conn->prepare("SELECT password FROM members WHERE id = ?");
-            $refreshStmt->execute([$user['id']]);
+            $refreshStmt->bind_param("i", $user['id']);
+            $refreshStmt->execute();
             $refreshResult = $refreshStmt->get_result();
             if ($refreshResult->num_rows > 0) {
                 $refreshData = $refreshResult->fetch_assoc();
                 $user['password'] = $refreshData['password'];
             }
             $refreshStmt->close();
-            
+
+            // Check if admin row exists
             $checkAdmin = $conn->prepare("SELECT id FROM admins WHERE email = ?");
             $checkAdmin->bind_param("s", $user['email']);
             $checkAdmin->execute();
             $adminResult = $checkAdmin->get_result();
-            
+
             if ($adminResult->num_rows == 0) {
+                // Insert new admin — copy the hash as-is, DO NOT re-hash
                 $insertAdmin = $conn->prepare("
                     INSERT INTO admins (username, email, password, role, phone, full_name, created_at)
                     VALUES (?, ?, ?, ?, ?, ?, NOW())
@@ -207,7 +197,7 @@ if ($result->num_rows > 0) {
                     "ssssss",
                     $user['name'],
                     $user['email'],
-                    $user['password'],
+                    $user['password'],   // already hashed — copy directly
                     $user['role'],
                     $user['phone'] ?? '',
                     $user['name']
@@ -215,6 +205,7 @@ if ($result->num_rows > 0) {
                 $insertAdmin->execute();
                 $insertAdmin->close();
             } else {
+                // Update existing admin — copy hash as-is
                 $updateAdmin = $conn->prepare("
                     UPDATE admins 
                     SET password = ?, 
@@ -223,8 +214,8 @@ if ($result->num_rows > 0) {
                     WHERE email = ?
                 ");
                 $updateAdmin->bind_param(
-                    "sss",
-                    $user['password'],
+                    "ssss",
+                    $user['password'],   // already hashed — copy directly
                     $user['name'],
                     $user['phone'] ?? '',
                     $user['email']
@@ -234,7 +225,7 @@ if ($result->num_rows > 0) {
             }
             $checkAdmin->close();
         }
-        
+
         $userData = [
             'id' => (int)$user['id'],
             'username' => $user['name'] ?? 'User',
@@ -252,9 +243,9 @@ if ($result->num_rows > 0) {
             'is_active' => 1,
             'isAdmin' => $isAdmin
         ];
-        
+
         $token = bin2hex(random_bytes(32));
-        
+
         http_response_code(200);
         echo json_encode([
             "status" => true,
@@ -270,7 +261,6 @@ $stmt->close();
 // ================================================================
 // LOGIN FAILED
 // ================================================================
-error_log("Login failed for: " . $email);
 http_response_code(401);
 echo json_encode([
     "status" => false,

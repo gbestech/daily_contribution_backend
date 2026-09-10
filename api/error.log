@@ -482,3 +482,60 @@ Stack trace:
 [09-Sep-2026 16:34:38 Europe/Berlin] New remaining: 0
 [09-Sep-2026 16:34:38 Europe/Berlin] Loan status updated to completed
 [09-Sep-2026 16:34:38 Europe/Berlin] New balance: 200000.00
+[10-Sep-2026 07:39:26 Europe/Berlin] PHP Fatal error:  Uncaught Error: Call to undefined method PDOStatement::close() in C:\xampp\htdocs\baleeg\api\members.php:490
+Stack trace:
+#0 C:\xampp\htdocs\baleeg\api\members.php(76): updateMember(Object(PDO), '35')
+#1 {main}
+  thrown in C:\xampp\htdocs\baleeg\api\members.php on line 490
+[10-Sep-2026 07:40:12 Europe/Berlin] PHP Fatal error:  Uncaught Error: Call to undefined method PDOStatement::close() in C:\xampp\htdocs\baleeg\api\members.php:490
+Stack trace:
+#0 C:\xampp\htdocs\baleeg\api\members.php(76): updateMember(Object(PDO), '35')
+#1 {main}
+  thrown in C:\xampp\htdocs\baleeg\api\members.php on line 490
+[10-Sep-2026 07:40:23 Europe/Berlin] PHP Fatal error:  Uncaught Error: Call to undefined method PDOStatement::close() in C:\xampp\htdocs\baleeg\api\members.php:490
+Stack trace:
+#0 C:\xampp\htdocs\baleeg\api\members.php(76): updateMember(Object(PDO), '35')
+#1 {main}
+  thrown in C:\xampp\htdocs\baleeg\api\members.php on line 490
+[10-Sep-2026 10:39:06 Europe/Berlin] === LOAN PAYMENT REQUEST ===
+[10-Sep-2026 10:39:06 Europe/Berlin] Method: OPTIONS
+[10-Sep-2026 10:39:06 Europe/Berlin] Input: 
+[10-Sep-2026 10:39:06 Europe/Berlin] === LOAN PAYMENT REQUEST ===
+[10-Sep-2026 10:39:06 Europe/Berlin] Method: POST
+[10-Sep-2026 10:39:06 Europe/Berlin] Input: Array
+(
+    [loan_id] => 5
+    [user_id] => 35
+    [amount] => 35000
+    [payment_date] => 2026-09-10 08:39:06
+    [note] => Payment for loan #5
+)
+
+[10-Sep-2026 10:39:06 Europe/Berlin] Payment Request - Loan ID: 5, User ID: 35, Amount: 35000
+[10-Sep-2026 10:39:06 Europe/Berlin] Loan found: Array
+(
+    [id] => 5
+    [user_id] => 35
+    [amount] => 35000.00
+    [interest] => 0.00
+    [total_payable] => 35000.00
+    [duration_months] => 6
+    [monthly_payment] => 5833.33
+    [status] => approved
+    [request_date] => 2026-09-09 14:51:22
+    [approval_date] => 2026-09-09 15:51:53
+    [completion_date] => 
+    [updated_at] => 2026-09-09 15:51:53
+    [total_paid] => 0.00
+)
+
+[10-Sep-2026 10:39:06 Europe/Berlin] Current total paid: 0
+[10-Sep-2026 10:39:06 Europe/Berlin] Total payable: 35000
+[10-Sep-2026 10:39:06 Europe/Berlin] Remaining: 35000
+[10-Sep-2026 10:39:06 Europe/Berlin] New payment amount: 35000
+[10-Sep-2026 10:39:06 Europe/Berlin] Balance update affected 1 rows
+[10-Sep-2026 10:39:06 Europe/Berlin] Payment record inserted with ID: 8
+[10-Sep-2026 10:39:06 Europe/Berlin] Loan total_paid updated from 0 to 35000
+[10-Sep-2026 10:39:06 Europe/Berlin] New remaining: 0
+[10-Sep-2026 10:39:06 Europe/Berlin] Loan status updated to completed
+[10-Sep-2026 10:39:06 Europe/Berlin] New balance: -35000.00

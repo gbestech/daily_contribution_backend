@@ -1,5 +1,5 @@
 <?php
-// api/transactions.php - Complete working file
+// api/transactions.php - Complete working file with configurable deposit charges
 
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
@@ -18,6 +18,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 header("Content-Type: application/json; charset=UTF-8");
 
 require_once __DIR__ . '/config/database.php';
+require_once __DIR__ . '/config/charges.php';
+
 $db = getDBConnection();
 
 if (!$db) {
@@ -39,11 +41,9 @@ foreach ($pathParts as $part) {
     }
 }
 
-// Check if it's an approve/reject action
 $action = null;
 if (strpos($path, '/approve') !== false) {
     $action = 'approve';
-    // Extract ID from path: /api/transactions.php/5/approve
     $id = null;
     foreach ($pathParts as $part) {
         if (is_numeric($part)) {
@@ -66,11 +66,11 @@ switch ($method) {
     case 'GET':
         getTransactions($db);
         break;
-        
+
     case 'POST':
         createTransaction($db);
         break;
-        
+
     case 'PUT':
         if ($action === 'approve' && $id) {
             approveTransaction($db, $id);
@@ -81,7 +81,7 @@ switch ($method) {
             echo json_encode(['error' => 'Invalid action or missing ID']);
         }
         break;
-        
+
     default:
         http_response_code(405);
         echo json_encode(['error' => 'Method not allowed']);
@@ -90,16 +90,15 @@ switch ($method) {
 
 function getTransactions($db) {
     try {
-        // Check if transactions table exists
         $tableCheck = $db->query("SHOW TABLES LIKE 'transactions'");
         if ($tableCheck->rowCount() == 0) {
             echo json_encode(['transactions' => []]);
             return;
         }
-        
+
         $stmt = $db->query("SELECT * FROM transactions ORDER BY id DESC LIMIT 100");
         $transactions = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        
+
         $formatted = [];
         foreach ($transactions as $t) {
             $formatted[] = [
@@ -109,6 +108,9 @@ function getTransactions($db) {
                 'accountNumber' => $t['account_number'] ?? 'N/A',
                 'type' => $t['type'],
                 'amount' => floatval($t['amount']),
+                'charge' => floatval($t['charge'] ?? 0),
+                'rate' => floatval($t['rate'] ?? 0),
+                'net_amount' => floatval($t['net_amount'] ?? $t['amount']),
                 'date' => $t['date'],
                 'status' => $t['status'] ?? 'pending',
                 'description' => $t['description'] ?? '',
@@ -120,7 +122,7 @@ function getTransactions($db) {
                 'created_at' => $t['created_at'] ?? null
             ];
         }
-        
+
         echo json_encode(['transactions' => $formatted]);
     } catch (Exception $e) {
         http_response_code(500);
@@ -132,16 +134,15 @@ function createTransaction($db) {
     try {
         $input = file_get_contents('php://input');
         $data = json_decode($input, true);
-        
+
         if (!$data) {
             http_response_code(400);
             echo json_encode(['error' => 'Invalid JSON data']);
             return;
         }
-        
-        // Log received data for debugging
+
         error_log("Creating transaction with data: " . print_r($data, true));
-        
+
         $memberId = $data['memberId'] ?? $data['member_id'] ?? null;
         $memberName = $data['memberName'] ?? $data['member_name'] ?? 'Unknown';
         $accountNumber = $data['accountNumber'] ?? $data['account_number'] ?? 'N/A';
@@ -150,38 +151,54 @@ function createTransaction($db) {
         $date = $data['date'] ?? date('Y-m-d');
         $status = $data['status'] ?? 'pending';
         $description = $data['description'] ?? '';
-        
-        // For transfers
+
         $toMemberId = $data['toMemberId'] ?? $data['to_member_id'] ?? null;
         $toMemberName = $data['toMemberName'] ?? $data['to_member_name'] ?? null;
         $fromMemberName = $data['fromMemberName'] ?? $data['from_member_name'] ?? null;
         $fromAccountNumber = $data['fromAccountNumber'] ?? $data['from_account_number'] ?? null;
         $toAccountNumber = $data['toAccountNumber'] ?? $data['to_account_number'] ?? null;
-        
+
         if (!$memberId) {
             http_response_code(400);
             echo json_encode(['error' => 'Missing required field: memberId']);
             return;
         }
-        
+
         if (!$type) {
             http_response_code(400);
             echo json_encode(['error' => 'Missing required field: type']);
             return;
         }
-        
+
         if ($amount <= 0) {
             http_response_code(400);
             echo json_encode(['error' => 'Amount must be greater than 0']);
             return;
         }
-        
-        // Insert transaction
+
+        // ============================================================
+        // CHARGE CALCULATION — DEPOSITS ONLY
+        // Reads rates from the `settings` table (charges key)
+        // ============================================================
+        if ($type === 'deposit') {
+            $chargeInfo = calculateCharge($amount, $db);
+            $charge     = $chargeInfo['charge'];
+            $rate       = $chargeInfo['rate'];
+            $netAmount  = $chargeInfo['net'];
+        } else {
+            $charge    = 0.00;
+            $rate      = 0.0000;
+            $netAmount = $amount;
+        }
+
+        error_log("Type=$type Amount=$amount → charge=$charge rate=$rate net=$netAmount");
+
         $sql = "INSERT INTO transactions (
-            member_id, member_name, account_number, type, amount, date, status, description,
+            member_id, member_name, account_number, type, amount, charge, rate, net_amount,
+            date, status, description,
             to_member_id, to_member_name, from_member_name, from_account_number, to_account_number
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-        
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+
         $stmt = $db->prepare($sql);
         $result = $stmt->execute([
             $memberId,
@@ -189,6 +206,9 @@ function createTransaction($db) {
             $accountNumber,
             $type,
             $amount,
+            $charge,
+            $rate,
+            $netAmount,
             $date,
             $status,
             $description,
@@ -198,11 +218,14 @@ function createTransaction($db) {
             $fromAccountNumber,
             $toAccountNumber
         ]);
-        
+
         if ($result) {
             $id = $db->lastInsertId();
             $data['id'] = $id;
-            
+            $data['charge'] = $charge;
+            $data['rate'] = $rate;
+            $data['net_amount'] = $netAmount;
+
             http_response_code(201);
             echo json_encode([
                 'success' => true,
@@ -225,133 +248,98 @@ function createTransaction($db) {
 function approveTransaction($db, $id) {
     try {
         $db->beginTransaction();
-        
-        // Get transaction details
+
         $stmt = $db->prepare("SELECT * FROM transactions WHERE id = ? AND status = 'pending'");
         $stmt->execute([$id]);
         $transaction = $stmt->fetch(PDO::FETCH_ASSOC);
-        
+
         if (!$transaction) {
             http_response_code(404);
             echo json_encode(['error' => 'Transaction not found or already processed']);
             return;
         }
-        
+
         $type = $transaction['type'];
-        $amount = $transaction['amount'];
+        $amount = floatval($transaction['amount']);
+        $charge = floatval($transaction['charge'] ?? 0);
+        $netAmount = floatval($transaction['net_amount'] ?? $amount);
         $memberId = $transaction['member_id'];
-        $description = $transaction['description'] ?? '';
-        
-        // Update transaction status
+
         $stmt = $db->prepare("UPDATE transactions SET status = 'approved' WHERE id = ?");
         $stmt->execute([$id]);
-        
+
         $updatedBalance = 0;
         $recipientBalance = 0;
-        
+
         if ($type === 'deposit') {
-            // Add to member's balance
+            // Credit NET (amount − charge)
             $stmt = $db->prepare("UPDATE members SET balance = balance + ? WHERE id = ?");
-            $stmt->execute([$amount, $memberId]);
-            error_log("Deposit: Added $amount to member $memberId");
-            
-            // Get updated balance
+            $stmt->execute([$netAmount, $memberId]);
+            error_log("Deposit approved: credited NET $netAmount (amount $amount, charge $charge) to member $memberId");
+
             $stmt = $db->prepare("SELECT balance FROM members WHERE id = ?");
             $stmt->execute([$memberId]);
             $member = $stmt->fetch(PDO::FETCH_ASSOC);
             $updatedBalance = $member['balance'];
-            
+
         } elseif ($type === 'withdrawal') {
-            // Subtract from member's balance
             $stmt = $db->prepare("UPDATE members SET balance = balance - ? WHERE id = ?");
             $stmt->execute([$amount, $memberId]);
-            error_log("Withdrawal: Subtracted $amount from member $memberId");
-            
-            // Get updated balance
+            error_log("Withdrawal approved: debited $amount from member $memberId");
+
             $stmt = $db->prepare("SELECT balance FROM members WHERE id = ?");
             $stmt->execute([$memberId]);
             $member = $stmt->fetch(PDO::FETCH_ASSOC);
             $updatedBalance = $member['balance'];
-            
+
         } elseif ($type === 'transfer') {
-            // Check if this is a transfer transaction
             $toMemberId = $transaction['to_member_id'] ?? null;
             $toMemberName = $transaction['to_member_name'] ?? null;
-            
+
+            $recipientId = null;
+
             if ($toMemberId) {
-                // Check if recipient exists
                 $stmt = $db->prepare("SELECT id FROM members WHERE id = ?");
                 $stmt->execute([$toMemberId]);
                 $recipient = $stmt->fetch();
-                
                 if ($recipient) {
-                    // Subtract from sender
-                    $stmt = $db->prepare("UPDATE members SET balance = balance - ? WHERE id = ?");
-                    $stmt->execute([$amount, $memberId]);
-                    error_log("Transfer: Subtracted $amount from sender $memberId");
-                    
-                    // Add to recipient
-                    $stmt = $db->prepare("UPDATE members SET balance = balance + ? WHERE id = ?");
-                    $stmt->execute([$amount, $toMemberId]);
-                    error_log("Transfer: Added $amount to recipient $toMemberId");
-                    
-                    // Get updated sender balance
-                    $stmt = $db->prepare("SELECT balance FROM members WHERE id = ?");
-                    $stmt->execute([$memberId]);
-                    $member = $stmt->fetch(PDO::FETCH_ASSOC);
-                    $updatedBalance = $member['balance'];
-                    
-                    // Get updated recipient balance
-                    $stmt = $db->prepare("SELECT balance FROM members WHERE id = ?");
-                    $stmt->execute([$toMemberId]);
-                    $recipientMember = $stmt->fetch(PDO::FETCH_ASSOC);
-                    $recipientBalance = $recipientMember['balance'];
-                } else {
-                    error_log("Transfer: Recipient ID $toMemberId not found");
+                    $recipientId = $recipient['id'];
                 }
-            } else {
-                // Try to find recipient by name
-                if ($toMemberName) {
-                    $stmt = $db->prepare("SELECT id FROM members WHERE name LIKE ?");
-                    $stmt->execute(["%$toMemberName%"]);
-                    $recipient = $stmt->fetch();
-                    
-                    if ($recipient) {
-                        $recipientId = $recipient['id'];
-                        
-                        // Subtract from sender
-                        $stmt = $db->prepare("UPDATE members SET balance = balance - ? WHERE id = ?");
-                        $stmt->execute([$amount, $memberId]);
-                        error_log("Transfer: Subtracted $amount from sender $memberId");
-                        
-                        // Add to recipient
-                        $stmt = $db->prepare("UPDATE members SET balance = balance + ? WHERE id = ?");
-                        $stmt->execute([$amount, $recipientId]);
-                        error_log("Transfer: Added $amount to recipient $recipientId");
-                        
-                        // Get updated sender balance
-                        $stmt = $db->prepare("SELECT balance FROM members WHERE id = ?");
-                        $stmt->execute([$memberId]);
-                        $member = $stmt->fetch(PDO::FETCH_ASSOC);
-                        $updatedBalance = $member['balance'];
-                        
-                        // Get updated recipient balance
-                        $stmt = $db->prepare("SELECT balance FROM members WHERE id = ?");
-                        $stmt->execute([$recipientId]);
-                        $recipientMember = $stmt->fetch(PDO::FETCH_ASSOC);
-                        $recipientBalance = $recipientMember['balance'];
-                    } else {
-                        error_log("Transfer: Could not find recipient by name: $toMemberName");
-                    }
+            } elseif ($toMemberName) {
+                $stmt = $db->prepare("SELECT id FROM members WHERE name LIKE ?");
+                $stmt->execute(["%$toMemberName%"]);
+                $recipient = $stmt->fetch();
+                if ($recipient) {
+                    $recipientId = $recipient['id'];
                 }
             }
+
+            if ($recipientId) {
+                $stmt = $db->prepare("UPDATE members SET balance = balance - ? WHERE id = ?");
+                $stmt->execute([$amount, $memberId]);
+
+                $stmt = $db->prepare("UPDATE members SET balance = balance + ? WHERE id = ?");
+                $stmt->execute([$amount, $recipientId]);
+
+                $stmt = $db->prepare("SELECT balance FROM members WHERE id = ?");
+                $stmt->execute([$memberId]);
+                $member = $stmt->fetch(PDO::FETCH_ASSOC);
+                $updatedBalance = $member['balance'];
+
+                $stmt = $db->prepare("SELECT balance FROM members WHERE id = ?");
+                $stmt->execute([$recipientId]);
+                $recipientMember = $stmt->fetch(PDO::FETCH_ASSOC);
+                $recipientBalance = $recipientMember['balance'];
+            }
         }
-        
+
         $db->commit();
-        
+
         echo json_encode([
             'success' => true,
             'message' => 'Transaction approved successfully',
+            'charge' => $charge,
+            'net_amount' => $netAmount,
             'sender_balance' => $updatedBalance,
             'recipient_balance' => $recipientBalance
         ]);
@@ -364,21 +352,19 @@ function approveTransaction($db, $id) {
 
 function rejectTransaction($db, $id) {
     try {
-        // Get transaction details
         $stmt = $db->prepare("SELECT * FROM transactions WHERE id = ? AND status = 'pending'");
         $stmt->execute([$id]);
         $transaction = $stmt->fetch(PDO::FETCH_ASSOC);
-        
+
         if (!$transaction) {
             http_response_code(404);
             echo json_encode(['error' => 'Transaction not found or already processed']);
             return;
         }
-        
-        // Update transaction status
+
         $stmt = $db->prepare("UPDATE transactions SET status = 'rejected' WHERE id = ?");
         $stmt->execute([$id]);
-        
+
         echo json_encode([
             'success' => true,
             'message' => 'Transaction rejected successfully'

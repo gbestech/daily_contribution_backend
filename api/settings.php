@@ -28,16 +28,15 @@ $method = $_SERVER['REQUEST_METHOD'];
 // GET: Fetch all settings or specific setting
 if ($method === 'GET') {
     try {
-        // Check if a specific setting key is requested
         if (isset($_GET['key']) && !empty($_GET['key'])) {
             $key = $_GET['key'];
             $stmt = $db->prepare("SELECT * FROM settings WHERE setting_key = ?");
             $stmt->execute([$key]);
             $setting = $stmt->fetch(PDO::FETCH_ASSOC);
-            
+
             if ($setting) {
                 echo json_encode([
-                    'status' => true, 
+                    'status' => true,
                     'data' => [
                         $setting['setting_key'] => json_decode($setting['setting_value'], true)
                     ]
@@ -48,17 +47,16 @@ if ($method === 'GET') {
             }
             exit();
         }
-        
-        // Fetch all settings
+
         $stmt = $db->query("SELECT * FROM settings");
         $settings = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        
+
         $result = [];
         foreach ($settings as $setting) {
             $result[$setting['setting_key']] = json_decode($setting['setting_value'], true);
         }
-        
-        // If loan settings don't exist, add default values
+
+        // Ensure 'loan' key exists with defaults
         if (!isset($result['loan'])) {
             $result['loan'] = [
                 'min_membership_days' => 180,
@@ -74,8 +72,7 @@ if ($method === 'GET') {
                 'late_payment_penalty' => 10,
                 'grace_period_days' => 7
             ];
-            
-            // Insert default loan settings into database
+
             $defaultLoanJson = json_encode($result['loan']);
             $insertStmt = $db->prepare("
                 INSERT INTO settings (setting_key, setting_value) 
@@ -85,7 +82,26 @@ if ($method === 'GET') {
             $insertStmt->execute([$defaultLoanJson, $defaultLoanJson]);
             $insertStmt->close();
         }
-        
+
+        // Ensure 'charges' key exists with defaults
+        if (!isset($result['charges'])) {
+            $result['charges'] = [
+                'enabled'              => true,
+                'threshold_amount'     => 200000,
+                'below_threshold_rate' => 1.0,
+                'above_threshold_rate' => 0.4,
+            ];
+
+            $defaultChargesJson = json_encode($result['charges']);
+            $insertStmt = $db->prepare("
+                INSERT INTO settings (setting_key, setting_value) 
+                VALUES ('charges', ?) 
+                ON DUPLICATE KEY UPDATE setting_value = ?
+            ");
+            $insertStmt->execute([$defaultChargesJson, $defaultChargesJson]);
+            $insertStmt->close();
+        }
+
         echo json_encode(['status' => true, 'data' => $result]);
     } catch (Exception $e) {
         http_response_code(500);
@@ -99,32 +115,30 @@ if ($method === 'POST') {
     try {
         $input = file_get_contents('php://input');
         $data = json_decode($input, true);
-        
+
         if (!$data) {
             http_response_code(400);
             echo json_encode(['error' => 'Invalid JSON data']);
             exit();
         }
-        
-        // Validate data structure - ADDED 'loan' to allowed keys
-        $allowedKeys = ['general', 'contribution', 'commission', 'payment', 'discount', 'security', 'suspension', 'loan'];
+
+        $allowedKeys = ['general', 'contribution', 'commission', 'payment', 'discount', 'security', 'suspension', 'loan', 'charges'];
         $invalidKeys = array_diff(array_keys($data), $allowedKeys);
-        
+
         if (!empty($invalidKeys)) {
             http_response_code(400);
             echo json_encode(['error' => 'Invalid setting keys: ' . implode(', ', $invalidKeys)]);
             exit();
         }
-        
+
         $db->beginTransaction();
         $updatedCount = 0;
-        
+
         foreach ($data as $key => $value) {
-            // Ensure value is an array
             if (!is_array($value)) {
                 throw new Exception("Value for '$key' must be an object/array");
             }
-            
+
             $jsonValue = json_encode($value);
             $stmt = $db->prepare("
                 INSERT INTO settings (setting_key, setting_value) 
@@ -134,10 +148,10 @@ if ($method === 'POST') {
             $stmt->execute([$key, $jsonValue, $jsonValue]);
             $updatedCount += $stmt->rowCount();
         }
-        
+
         $db->commit();
         echo json_encode([
-            'status' => true, 
+            'status' => true,
             'message' => 'Settings saved successfully',
             'updated' => $updatedCount,
             'timestamp' => date('Y-m-d H:i:s')
@@ -155,24 +169,23 @@ if ($method === 'PUT') {
     try {
         $input = file_get_contents('php://input');
         $data = json_decode($input, true);
-        
+
         if (!$data || !isset($data['key']) || !isset($data['value'])) {
             http_response_code(400);
             echo json_encode(['error' => 'Missing key or value']);
             exit();
         }
-        
+
         $key = $data['key'];
         $value = $data['value'];
-        
-        // Validate key - ADDED 'loan'
-        $allowedKeys = ['general', 'contribution', 'commission', 'payment', 'discount', 'security', 'suspension', 'loan'];
+
+        $allowedKeys = ['general', 'contribution', 'commission', 'payment', 'discount', 'security', 'suspension', 'loan', 'charges'];
         if (!in_array($key, $allowedKeys)) {
             http_response_code(400);
             echo json_encode(['error' => 'Invalid setting key']);
             exit();
         }
-        
+
         $jsonValue = json_encode($value);
         $stmt = $db->prepare("
             INSERT INTO settings (setting_key, setting_value) 
@@ -180,9 +193,9 @@ if ($method === 'PUT') {
             ON DUPLICATE KEY UPDATE setting_value = ?
         ");
         $stmt->execute([$key, $jsonValue, $jsonValue]);
-        
+
         echo json_encode([
-            'status' => true, 
+            'status' => true,
             'message' => 'Setting updated successfully',
             'key' => $key
         ]);
@@ -198,19 +211,19 @@ if ($method === 'DELETE') {
     try {
         $input = file_get_contents('php://input');
         $data = json_decode($input, true);
-        
+
         if (!$data || !isset($data['key'])) {
             http_response_code(400);
             echo json_encode(['error' => 'Setting key required']);
             exit();
         }
-        
+
         $key = $data['key'];
         $stmt = $db->prepare("DELETE FROM settings WHERE setting_key = ?");
         $stmt->execute([$key]);
-        
+
         echo json_encode([
-            'status' => true, 
+            'status' => true,
             'message' => 'Setting deleted successfully',
             'key' => $key
         ]);
@@ -221,7 +234,6 @@ if ($method === 'DELETE') {
     exit();
 }
 
-// If no method matched
 http_response_code(405);
 echo json_encode(['error' => 'Method not allowed']);
 ?>
