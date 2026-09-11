@@ -1,5 +1,6 @@
 <?php
-// api/transactions.php - Complete working file with configurable deposit charges
+// api/transactions.php - Complete working file
+// Supports: deposits, withdrawals, transfers, payment slips, rejection reasons, deposit charges
 
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
@@ -28,6 +29,12 @@ if (!$db) {
     exit();
 }
 
+// ============================================================
+// AUTO-MIGRATION: ensure needed columns exist
+// Safe to run on every request — only adds missing columns.
+// ============================================================
+ensureSchema($db);
+
 $method = $_SERVER['REQUEST_METHOD'];
 $requestUri = $_SERVER['REQUEST_URI'];
 $path = parse_url($requestUri, PHP_URL_PATH);
@@ -44,22 +51,8 @@ foreach ($pathParts as $part) {
 $action = null;
 if (strpos($path, '/approve') !== false) {
     $action = 'approve';
-    $id = null;
-    foreach ($pathParts as $part) {
-        if (is_numeric($part)) {
-            $id = $part;
-            break;
-        }
-    }
 } elseif (strpos($path, '/reject') !== false) {
     $action = 'reject';
-    $id = null;
-    foreach ($pathParts as $part) {
-        if (is_numeric($part)) {
-            $id = $part;
-            break;
-        }
-    }
 }
 
 switch ($method) {
@@ -88,6 +81,70 @@ switch ($method) {
         break;
 }
 
+// ============================================================
+// SCHEMA HELPERS
+// ============================================================
+function ensureSchema($db) {
+    try {
+        $check = $db->query("SHOW TABLES LIKE 'transactions'");
+        if ($check->rowCount() == 0) {
+            // Table doesn't exist yet — nothing to migrate.
+            return;
+        }
+
+        // Detect existing columns
+        $cols = [];
+        $stmt = $db->query("SHOW COLUMNS FROM transactions");
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $c) {
+            $cols[strtolower($c['Field'])] = true;
+        }
+
+        $adds = [];
+
+        if (!isset($cols['payment_slip'])) {
+            $adds[] = "ADD COLUMN payment_slip LONGTEXT NULL";
+        }
+        if (!isset($cols['payment_slip_name'])) {
+            $adds[] = "ADD COLUMN payment_slip_name VARCHAR(255) NULL";
+        }
+        if (!isset($cols['payment_slip_type'])) {
+            $adds[] = "ADD COLUMN payment_slip_type VARCHAR(100) NULL";
+        }
+        if (!isset($cols['rejection_reason'])) {
+            $adds[] = "ADD COLUMN rejection_reason TEXT NULL";
+        }
+        if (!isset($cols['rejected_by'])) {
+            $adds[] = "ADD COLUMN rejected_by VARCHAR(255) NULL";
+        }
+        if (!isset($cols['rejected_at'])) {
+            $adds[] = "ADD COLUMN rejected_at DATETIME NULL";
+        }
+        if (!isset($cols['approved_at'])) {
+            $adds[] = "ADD COLUMN approved_at DATETIME NULL";
+        }
+        if (!isset($cols['charge'])) {
+            $adds[] = "ADD COLUMN charge DECIMAL(15,2) NOT NULL DEFAULT 0";
+        }
+        if (!isset($cols['rate'])) {
+            $adds[] = "ADD COLUMN rate DECIMAL(10,4) NOT NULL DEFAULT 0";
+        }
+        if (!isset($cols['net_amount'])) {
+            $adds[] = "ADD COLUMN net_amount DECIMAL(15,2) NOT NULL DEFAULT 0";
+        }
+
+        if (!empty($adds)) {
+            $sql = "ALTER TABLE transactions " . implode(", ", $adds);
+            $db->exec($sql);
+            error_log("[transactions.php] Schema updated: " . $sql);
+        }
+    } catch (Exception $e) {
+        error_log("[transactions.php] Schema migration skipped: " . $e->getMessage());
+    }
+}
+
+// ============================================================
+// GET
+// ============================================================
 function getTransactions($db) {
     try {
         $tableCheck = $db->query("SHOW TABLES LIKE 'transactions'");
@@ -114,11 +171,25 @@ function getTransactions($db) {
                 'date' => $t['date'],
                 'status' => $t['status'] ?? 'pending',
                 'description' => $t['description'] ?? '',
+
+                // Transfer fields
                 'toMemberId' => $t['to_member_id'] ?? null,
                 'toMemberName' => $t['to_member_name'] ?? null,
                 'fromMemberName' => $t['from_member_name'] ?? null,
                 'fromAccountNumber' => $t['from_account_number'] ?? null,
                 'toAccountNumber' => $t['to_account_number'] ?? null,
+
+                // Payment slip fields
+                'payment_slip' => $t['payment_slip'] ?? null,
+                'payment_slip_name' => $t['payment_slip_name'] ?? null,
+                'payment_slip_type' => $t['payment_slip_type'] ?? null,
+
+                // Rejection fields
+                'rejection_reason' => $t['rejection_reason'] ?? null,
+                'rejected_by' => $t['rejected_by'] ?? null,
+                'rejected_at' => $t['rejected_at'] ?? null,
+                'approved_at' => $t['approved_at'] ?? null,
+
                 'created_at' => $t['created_at'] ?? null
             ];
         }
@@ -130,6 +201,9 @@ function getTransactions($db) {
     }
 }
 
+// ============================================================
+// POST — create transaction
+// ============================================================
 function createTransaction($db) {
     try {
         $input = file_get_contents('php://input');
@@ -141,45 +215,43 @@ function createTransaction($db) {
             return;
         }
 
-        error_log("Creating transaction with data: " . print_r($data, true));
-
-        $memberId = $data['memberId'] ?? $data['member_id'] ?? null;
-        $memberName = $data['memberName'] ?? $data['member_name'] ?? 'Unknown';
+        $memberId      = $data['memberId'] ?? $data['member_id'] ?? null;
+        $memberName    = $data['memberName'] ?? $data['member_name'] ?? 'Unknown';
         $accountNumber = $data['accountNumber'] ?? $data['account_number'] ?? 'N/A';
-        $type = $data['type'] ?? null;
-        $amount = floatval($data['amount'] ?? 0);
-        $date = $data['date'] ?? date('Y-m-d');
-        $status = $data['status'] ?? 'pending';
-        $description = $data['description'] ?? '';
+        $type          = $data['type'] ?? null;
+        $amount        = floatval($data['amount'] ?? 0);
+        $date          = $data['date'] ?? date('Y-m-d');
+        $status        = $data['status'] ?? 'pending';
+        $description   = $data['description'] ?? '';
 
-        $toMemberId = $data['toMemberId'] ?? $data['to_member_id'] ?? null;
-        $toMemberName = $data['toMemberName'] ?? $data['to_member_name'] ?? null;
-        $fromMemberName = $data['fromMemberName'] ?? $data['from_member_name'] ?? null;
+        $toMemberId        = $data['toMemberId'] ?? $data['to_member_id'] ?? null;
+        $toMemberName      = $data['toMemberName'] ?? $data['to_member_name'] ?? null;
+        $fromMemberName    = $data['fromMemberName'] ?? $data['from_member_name'] ?? null;
         $fromAccountNumber = $data['fromAccountNumber'] ?? $data['from_account_number'] ?? null;
-        $toAccountNumber = $data['toAccountNumber'] ?? $data['to_account_number'] ?? null;
+        $toAccountNumber   = $data['toAccountNumber'] ?? $data['to_account_number'] ?? null;
+
+        // Payment slip
+        $paymentSlip     = $data['payment_slip'] ?? null;
+        $paymentSlipName = $data['payment_slip_name'] ?? null;
+        $paymentSlipType = $data['payment_slip_type'] ?? null;
 
         if (!$memberId) {
             http_response_code(400);
             echo json_encode(['error' => 'Missing required field: memberId']);
             return;
         }
-
         if (!$type) {
             http_response_code(400);
             echo json_encode(['error' => 'Missing required field: type']);
             return;
         }
-
         if ($amount <= 0) {
             http_response_code(400);
             echo json_encode(['error' => 'Amount must be greater than 0']);
             return;
         }
 
-        // ============================================================
-        // CHARGE CALCULATION — DEPOSITS ONLY
-        // Reads rates from the `settings` table (charges key)
-        // ============================================================
+        // CHARGE — deposits only
         if ($type === 'deposit') {
             $chargeInfo = calculateCharge($amount, $db);
             $charge     = $chargeInfo['charge'];
@@ -191,13 +263,12 @@ function createTransaction($db) {
             $netAmount = $amount;
         }
 
-        error_log("Type=$type Amount=$amount → charge=$charge rate=$rate net=$netAmount");
-
         $sql = "INSERT INTO transactions (
             member_id, member_name, account_number, type, amount, charge, rate, net_amount,
             date, status, description,
-            to_member_id, to_member_name, from_member_name, from_account_number, to_account_number
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+            to_member_id, to_member_name, from_member_name, from_account_number, to_account_number,
+            payment_slip, payment_slip_name, payment_slip_type
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
         $stmt = $db->prepare($sql);
         $result = $stmt->execute([
@@ -216,21 +287,24 @@ function createTransaction($db) {
             $toMemberName,
             $fromMemberName,
             $fromAccountNumber,
-            $toAccountNumber
+            $toAccountNumber,
+            $paymentSlip,
+            $paymentSlipName,
+            $paymentSlipType
         ]);
 
         if ($result) {
             $id = $db->lastInsertId();
-            $data['id'] = $id;
-            $data['charge'] = $charge;
-            $data['rate'] = $rate;
-            $data['net_amount'] = $netAmount;
-
-            http_response_code(201);
             echo json_encode([
                 'success' => true,
                 'message' => 'Transaction created successfully',
-                'transaction' => $data
+                'id' => $id,
+                'transaction' => array_merge($data, [
+                    'id' => $id,
+                    'charge' => $charge,
+                    'rate' => $rate,
+                    'net_amount' => $netAmount,
+                ])
             ]);
         } else {
             http_response_code(500);
@@ -245,6 +319,9 @@ function createTransaction($db) {
     }
 }
 
+// ============================================================
+// PUT /approve/{id}
+// ============================================================
 function approveTransaction($db, $id) {
     try {
         $db->beginTransaction();
@@ -259,23 +336,21 @@ function approveTransaction($db, $id) {
             return;
         }
 
-        $type = $transaction['type'];
-        $amount = floatval($transaction['amount']);
-        $charge = floatval($transaction['charge'] ?? 0);
-        $netAmount = floatval($transaction['net_amount'] ?? $amount);
-        $memberId = $transaction['member_id'];
+        $type       = $transaction['type'];
+        $amount     = floatval($transaction['amount']);
+        $charge     = floatval($transaction['charge'] ?? 0);
+        $netAmount  = floatval($transaction['net_amount'] ?? $amount);
+        $memberId   = $transaction['member_id'];
 
-        $stmt = $db->prepare("UPDATE transactions SET status = 'approved' WHERE id = ?");
+        $stmt = $db->prepare("UPDATE transactions SET status = 'approved', approved_at = NOW() WHERE id = ?");
         $stmt->execute([$id]);
 
         $updatedBalance = 0;
         $recipientBalance = 0;
 
         if ($type === 'deposit') {
-            // Credit NET (amount − charge)
             $stmt = $db->prepare("UPDATE members SET balance = balance + ? WHERE id = ?");
             $stmt->execute([$netAmount, $memberId]);
-            error_log("Deposit approved: credited NET $netAmount (amount $amount, charge $charge) to member $memberId");
 
             $stmt = $db->prepare("SELECT balance FROM members WHERE id = ?");
             $stmt->execute([$memberId]);
@@ -285,7 +360,6 @@ function approveTransaction($db, $id) {
         } elseif ($type === 'withdrawal') {
             $stmt = $db->prepare("UPDATE members SET balance = balance - ? WHERE id = ?");
             $stmt->execute([$amount, $memberId]);
-            error_log("Withdrawal approved: debited $amount from member $memberId");
 
             $stmt = $db->prepare("SELECT balance FROM members WHERE id = ?");
             $stmt->execute([$memberId]);
@@ -293,25 +367,20 @@ function approveTransaction($db, $id) {
             $updatedBalance = $member['balance'];
 
         } elseif ($type === 'transfer') {
-            $toMemberId = $transaction['to_member_id'] ?? null;
+            $toMemberId   = $transaction['to_member_id'] ?? null;
             $toMemberName = $transaction['to_member_name'] ?? null;
-
-            $recipientId = null;
+            $recipientId  = null;
 
             if ($toMemberId) {
                 $stmt = $db->prepare("SELECT id FROM members WHERE id = ?");
                 $stmt->execute([$toMemberId]);
                 $recipient = $stmt->fetch();
-                if ($recipient) {
-                    $recipientId = $recipient['id'];
-                }
+                if ($recipient) $recipientId = $recipient['id'];
             } elseif ($toMemberName) {
                 $stmt = $db->prepare("SELECT id FROM members WHERE name LIKE ?");
                 $stmt->execute(["%$toMemberName%"]);
                 $recipient = $stmt->fetch();
-                if ($recipient) {
-                    $recipientId = $recipient['id'];
-                }
+                if ($recipient) $recipientId = $recipient['id'];
             }
 
             if ($recipientId) {
@@ -328,8 +397,8 @@ function approveTransaction($db, $id) {
 
                 $stmt = $db->prepare("SELECT balance FROM members WHERE id = ?");
                 $stmt->execute([$recipientId]);
-                $recipientMember = $stmt->fetch(PDO::FETCH_ASSOC);
-                $recipientBalance = $recipientMember['balance'];
+                $rm = $stmt->fetch(PDO::FETCH_ASSOC);
+                $recipientBalance = $rm['balance'];
             }
         }
 
@@ -350,8 +419,28 @@ function approveTransaction($db, $id) {
     }
 }
 
+// ============================================================
+// PUT /reject/{id}
+// Accepts body: { "reason": "...", "rejected_by": "Admin Name" }
+// Also accepts "rejection_reason" as alias.
+// ============================================================
 function rejectTransaction($db, $id) {
     try {
+        $input = file_get_contents('php://input');
+        $data = json_decode($input, true) ?: [];
+
+        $reason = $data['reason']
+               ?? $data['rejection_reason']
+               ?? $data['rejectionReason']
+               ?? $data['admin_note']
+               ?? null;
+
+        $rejectedBy = $data['rejected_by']
+                   ?? $data['rejectedBy']
+                   ?? $data['admin_name']
+                   ?? $data['approved_by']
+                   ?? 'Admin';
+
         $stmt = $db->prepare("SELECT * FROM transactions WHERE id = ? AND status = 'pending'");
         $stmt->execute([$id]);
         $transaction = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -362,12 +451,21 @@ function rejectTransaction($db, $id) {
             return;
         }
 
-        $stmt = $db->prepare("UPDATE transactions SET status = 'rejected' WHERE id = ?");
-        $stmt->execute([$id]);
+        $stmt = $db->prepare(
+            "UPDATE transactions
+             SET status = 'rejected',
+                 rejection_reason = ?,
+                 rejected_by = ?,
+                 rejected_at = NOW()
+             WHERE id = ?"
+        );
+        $stmt->execute([$reason, $rejectedBy, $id]);
 
         echo json_encode([
             'success' => true,
-            'message' => 'Transaction rejected successfully'
+            'message' => 'Transaction rejected successfully',
+            'rejection_reason' => $reason,
+            'rejected_by' => $rejectedBy
         ]);
     } catch (Exception $e) {
         http_response_code(500);
