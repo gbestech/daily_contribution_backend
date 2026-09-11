@@ -88,11 +88,9 @@ function ensureSchema($db) {
     try {
         $check = $db->query("SHOW TABLES LIKE 'transactions'");
         if ($check->rowCount() == 0) {
-            // Table doesn't exist yet — nothing to migrate.
             return;
         }
 
-        // Detect existing columns
         $cols = [];
         $stmt = $db->query("SHOW COLUMNS FROM transactions");
         foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $c) {
@@ -143,6 +141,25 @@ function ensureSchema($db) {
 }
 
 // ============================================================
+// Normalize a stored slip value into a full data URL
+// ============================================================
+function normalizeSlipDataUrl($slip, $type) {
+    if (empty($slip)) return null;
+
+    // Strip any whitespace / newlines
+    $slip = preg_replace('/\s+/', '', $slip);
+
+    // Already a full data URL
+    if (strpos($slip, 'data:') === 0) {
+        return $slip;
+    }
+
+    // Otherwise, wrap with a data URL header
+    $mime = $type ?: 'image/jpeg';
+    return 'data:' . $mime . ';base64,' . $slip;
+}
+
+// ============================================================
 // GET
 // ============================================================
 function getTransactions($db) {
@@ -179,8 +196,11 @@ function getTransactions($db) {
                 'fromAccountNumber' => $t['from_account_number'] ?? null,
                 'toAccountNumber' => $t['to_account_number'] ?? null,
 
-                // Payment slip fields
-                'payment_slip' => $t['payment_slip'] ?? null,
+                // Payment slip fields — normalized to full data URL
+                'payment_slip' => normalizeSlipDataUrl(
+                    $t['payment_slip'] ?? null,
+                    $t['payment_slip_type'] ?? null
+                ),
                 'payment_slip_name' => $t['payment_slip_name'] ?? null,
                 'payment_slip_type' => $t['payment_slip_type'] ?? null,
 
@@ -234,6 +254,11 @@ function createTransaction($db) {
         $paymentSlip     = $data['payment_slip'] ?? null;
         $paymentSlipName = $data['payment_slip_name'] ?? null;
         $paymentSlipType = $data['payment_slip_type'] ?? null;
+
+        // ✅ Strip whitespace from base64 (newlines break rendering)
+        if (!empty($paymentSlip)) {
+            $paymentSlip = preg_replace('/\s+/', '', $paymentSlip);
+        }
 
         if (!$memberId) {
             http_response_code(400);
