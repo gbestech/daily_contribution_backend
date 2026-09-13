@@ -24,8 +24,25 @@ try {
     $db = getDBConnection();
 } catch (Exception $e) {
     http_response_code(500);
-    echo json_encode(['error' => 'Database connection failed']);
+    echo json_encode(['error' => 'Database connection failed: ' . $e->getMessage()]);
     exit();
+}
+
+// ---------- Auto-ensure schema is correct (safe to run every time) ----------
+try {
+    $db->exec("
+        CREATE TABLE IF NOT EXISTS permissions (
+            role VARCHAR(50) NOT NULL,
+            operations TEXT NOT NULL,
+            PRIMARY KEY (role)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    ");
+
+    // Make sure operations column is TEXT (not VARCHAR(255))
+    $db->exec("ALTER TABLE permissions MODIFY operations TEXT NOT NULL");
+} catch (Exception $e) {
+    error_log("Schema check failed: " . $e->getMessage());
+    // Don't die here — table probably already exists correctly
 }
 
 $method = $_SERVER['REQUEST_METHOD'];
@@ -36,9 +53,15 @@ if ($method === 'GET') {
         $stmt = $db->query("SELECT role, operations FROM permissions");
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-        $result = [];
+        $result = [
+            'admin'   => [],
+            'manager' => [],
+            'member'  => [],
+        ];
+
         foreach ($rows as $row) {
-            $result[$row['role']] = json_decode($row['operations'], true) ?: [];
+            $decoded = json_decode($row['operations'], true);
+            $result[$row['role']] = is_array($decoded) ? $decoded : [];
         }
 
         echo json_encode([
@@ -46,6 +69,7 @@ if ($method === 'GET') {
             'permissions' => $result,
         ]);
     } catch (Exception $e) {
+        error_log("GET error: " . $e->getMessage());
         http_response_code(500);
         echo json_encode(['error' => $e->getMessage()]);
     }
@@ -55,7 +79,10 @@ if ($method === 'GET') {
 // ---------- PUT: update permissions for a role ----------
 if ($method === 'PUT') {
     $input = file_get_contents('php://input');
+    error_log("PUT raw input: " . $input);
+
     $data = json_decode($input, true);
+    error_log("PUT decoded: " . print_r($data, true));
 
     if (!$data || !isset($data['role']) || !isset($data['operations'])) {
         http_response_code(400);
@@ -68,7 +95,7 @@ if ($method === 'PUT') {
 
     if (!in_array($role, $allowedRoles, true)) {
         http_response_code(400);
-        echo json_encode(['error' => 'Invalid role']);
+        echo json_encode(['error' => 'Invalid role: ' . $role]);
         exit();
     }
 
@@ -81,6 +108,8 @@ if ($method === 'PUT') {
     // Sanitize: keep only strings
     $operations = array_values(array_filter($data['operations'], 'is_string'));
     $encoded = json_encode($operations);
+
+    error_log("PUT role=$role, operations count=" . count($operations) . ", encoded=" . $encoded);
 
     try {
         // Upsert
@@ -98,11 +127,15 @@ if ($method === 'PUT') {
             'operations' => $operations,
         ]);
     } catch (Exception $e) {
+        error_log("PUT DB error: " . $e->getMessage());
         http_response_code(500);
-        echo json_encode(['error' => $e->getMessage()]);
+        echo json_encode([
+            'error' => 'DB error: ' . $e->getMessage(),
+            'role' => $role,
+        ]);
     }
     exit();
 }
 
 http_response_code(405);
-echo json_encode(['error' => 'Method not allowed']);
+echo json_encode(['error' => 'Method not allowed: ' . $method]);

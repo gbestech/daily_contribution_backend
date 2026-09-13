@@ -539,3 +539,105 @@ Stack trace:
 [10-Sep-2026 10:39:06 Europe/Berlin] New remaining: 0
 [10-Sep-2026 10:39:06 Europe/Berlin] Loan status updated to completed
 [10-Sep-2026 10:39:06 Europe/Berlin] New balance: -35000.00
+[13-Sep-2026 12:09:07 Europe/Berlin] PUT raw input: {"role":"manager","operations":["view_dashboard"]}
+[13-Sep-2026 12:09:07 Europe/Berlin] PUT decoded: Array
+(
+    [role] => manager
+    [operations] => Array
+        (
+            [0] => view_dashboard
+        )
+
+)
+
+[13-Sep-2026 12:09:07 Europe/Berlin] PUT role=manager, operations count=1, encoded=["view_dashboard"]
+[13-Sep-2026 12:09:16 Europe/Berlin] PUT raw input: {"role":"manager","operations":["view_dashboard","view_broadsheet"]}
+[13-Sep-2026 12:09:16 Europe/Berlin] PUT decoded: Array
+(
+    [role] => manager
+    [operations] => Array
+        (
+            [0] => view_dashboard
+            [1] => view_broadsheet
+        )
+
+)
+
+[13-Sep-2026 12:09:16 Europe/Berlin] PUT role=manager, operations count=2, encoded=["view_dashboard","view_broadsheet"]
+[13-Sep-2026 12:10:34 Europe/Berlin] PUT raw input: {"role":"manager","operations":["view_dashboard"]}
+[13-Sep-2026 12:10:34 Europe/Berlin] PUT decoded: Array
+(
+    [role] => manager
+    [operations] => Array
+        (
+            [0] => view_dashboard
+        )
+
+)
+
+[13-Sep-2026 12:10:34 Europe/Berlin] PUT role=manager, operations count=1, encoded=["view_dashboard"]
+[13-Sep-2026 12:11:41 Europe/Berlin] PUT raw input: {"role":"manager","operations":["view_dashboard","view_broadsheet","view_reports","view_transactions","approve_transactions","reject_transactions","create_deposit","create_withdrawal","create_transfer","view_history","create_member","edit_member","delete_member","assign_role","manage_staff","manage_permissions","manage_settings","view_expenses"]}
+[13-Sep-2026 12:11:41 Europe/Berlin] PUT decoded: Array
+(
+    [role] => manager
+    [operations] => Array
+        (
+            [0] => view_dashboard
+            [1] => view_broadsheet
+            [2] => view_reports
+            [3] => view_transactions
+            [4] => approve_transactions
+            [5] => reject_transactions
+            [6] => create_deposit
+            [7] => create_withdrawal
+            [8] => create_transfer
+            [9] => view_history
+            [10] => create_member
+            [11] => edit_member
+            [12] => delete_member
+            [13] => assign_role
+            [14] => manage_staff
+            [15] => manage_permissions
+            [16] => manage_settings
+            [17] => view_expenses
+        )
+
+)
+
+[13-Sep-2026 12:11:41 Europe/Berlin] PUT role=manager, operations count=18, encoded=["view_dashboard","view_broadsheet","view_reports","view_transactions","approve_transactions","reject_transactions","create_deposit","create_withdrawal","create_transfer","view_history","create_member","edit_member","delete_member","assign_role","manage_staff","manage_permissions","manage_settings","view_expenses"]
+[13-Sep-2026 12:12:51 Europe/Berlin] PUT raw input: {"role":"manager","operations":["view_dashboard","create_deposit","create_withdrawal","create_transfer","view_expenses"]}
+[13-Sep-2026 12:12:51 Europe/Berlin] PUT decoded: Array
+(
+    [role] => manager
+    [operations] => Array
+        (
+            [0] => view_dashboard
+            [1] => create_deposit
+            [2] => create_withdrawal
+            [3] => create_transfer
+            [4] => view_expenses
+        )
+
+)
+
+[13-Sep-2026 12:12:51 Europe/Berlin] PUT role=manager, operations count=5, encoded=["view_dashboard","create_deposit","create_withdrawal","create_transfer","view_expenses"]
+[13-Sep-2026 12:15:24 Europe/Berlin] PUT raw input: {"role":"manager","operations":["view_dashboard","create_deposit","create_withdrawal","create_transfer","view_expenses","view_history","view_broadsheet","view_reports","create_member"]}
+[13-Sep-2026 12:15:24 Europe/Berlin] PUT decoded: Array
+(
+    [role] => manager
+    [operations] => Array
+        (
+            [0] => view_dashboard
+            [1] => create_deposit
+            [2] => create_withdrawal
+            [3] => create_transfer
+            [4] => view_expenses
+            [5] => view_history
+            [6] => view_broadsheet
+            [7] => view_reports
+            [8] => create_member
+        )
+
+)
+
+[13-Sep-2026 12:15:24 Europe/Berlin] PUT role=manager, operations count=9, encoded=["view_dashboard","create_deposit","create_withdrawal","create_transfer","view_expenses","view_history","view_broadsheet","view_reports","create_member"]
