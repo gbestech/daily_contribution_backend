@@ -641,3 +641,41 @@ Stack trace:
 )
 
 [13-Sep-2026 12:15:24 Europe/Berlin] PUT role=manager, operations count=9, encoded=["view_dashboard","create_deposit","create_withdrawal","create_transfer","view_expenses","view_history","view_broadsheet","view_reports","create_member"]
+[13-Sep-2026 17:01:08 Europe/Berlin] PUT raw input: {"role":"manager","operations":["view_dashboard","create_deposit","create_withdrawal","create_transfer","view_expenses","view_history","view_broadsheet","view_reports"]}
+[13-Sep-2026 17:01:08 Europe/Berlin] PUT decoded: Array
+(
+    [role] => manager
+    [operations] => Array
+        (
+            [0] => view_dashboard
+            [1] => create_deposit
+            [2] => create_withdrawal
+            [3] => create_transfer
+            [4] => view_expenses
+            [5] => view_history
+            [6] => view_broadsheet
+            [7] => view_reports
+        )
+
+)
+
+[13-Sep-2026 17:01:08 Europe/Berlin] PUT role=manager, operations count=8, encoded=["view_dashboard","create_deposit","create_withdrawal","create_transfer","view_expenses","view_history","view_broadsheet","view_reports"]
+[13-Sep-2026 17:02:18 Europe/Berlin] PUT raw input: {"role":"manager","operations":["view_dashboard","create_deposit","create_withdrawal","create_transfer","view_reports","view_history","view_expenses","manage_expenses"]}
+[13-Sep-2026 17:02:18 Europe/Berlin] PUT decoded: Array
+(
+    [role] => manager
+    [operations] => Array
+        (
+            [0] => view_dashboard
+            [1] => create_deposit
+            [2] => create_withdrawal
+            [3] => create_transfer
+            [4] => view_reports
+            [5] => view_history
+            [6] => view_expenses
+            [7] => manage_expenses
+        )
+
+)
+
+[13-Sep-2026 17:02:18 Europe/Berlin] PUT role=manager, operations count=8, encoded=["view_dashboard","create_deposit","create_withdrawal","create_transfer","view_reports","view_history","view_expenses","manage_expenses"]

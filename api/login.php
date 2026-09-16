@@ -41,13 +41,16 @@ if ($email === '' || $password === '') {
     exit();
 }
 
+/* =====================================================================
+ * SECURITY HELPERS (inline, so no extra file is required)
+ * ===================================================================== */
+
 /**
  * Universal password check — works with BOTH hashed and plain values
  */
 function passwordMatches($plainInput, $storedValue) {
     if ($storedValue === null || $storedValue === '') return false;
 
-    // Detect bcrypt / argon hash
     $looksHashed =
         strlen($storedValue) >= 20 &&
         (
@@ -59,13 +62,102 @@ function passwordMatches($plainInput, $storedValue) {
 
     if ($looksHashed) {
         if (password_verify($plainInput, $storedValue)) return true;
-        // fallback (dev only): allow plain match against the hash string
-        return $plainInput === $storedValue;
+        return $plainInput === $storedValue; // dev fallback
     }
 
-    // Plain-text compare
     return $plainInput === $storedValue;
 }
+
+/**
+ * Read the 'security' settings row with defaults
+ */
+function getSecuritySettings($db) {
+    static $cached = null;
+    if ($cached !== null) return $cached;
+
+    $defaults = [
+        'two_factor_auth'         => false,
+        'session_timeout'         => 30,
+        'max_login_attempts'      => 5,
+        'password_expiry_days'    => 90,
+        'require_strong_password' => true,
+    ];
+
+    try {
+        $stmt = $db->prepare("SELECT setting_value FROM settings WHERE setting_key = 'security'");
+        $stmt->execute();
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row && !empty($row['setting_value'])) {
+            $saved = json_decode($row['setting_value'], true);
+            if (is_array($saved)) {
+                $cached = array_merge($defaults, $saved);
+                return $cached;
+            }
+        }
+    } catch (Exception $e) { /* use defaults */ }
+
+    $cached = $defaults;
+    return $cached;
+}
+
+function isAccountLocked($row) {
+    if (empty($row['locked_until'])) return false;
+    return strtotime($row['locked_until']) > time();
+}
+
+function isPasswordExpired($row, $expiryDays) {
+    if (empty($expiryDays) || $expiryDays <= 0) return false;
+    if (empty($row['password_changed_at'])) return true;
+    return (time() - strtotime($row['password_changed_at'])) > ($expiryDays * 86400);
+}
+
+/**
+ * Apply lock / failed-attempt logic for a given table+id.
+ * Returns an array describing the result, or null on success.
+ */
+function handleFailedAttempt($db, $table, $id, $maxAttempts) {
+    // Only these table names are allowed — avoids SQL injection risk
+    if (!in_array($table, ['admins', 'members'], true)) return null;
+
+    // Fetch current count
+    $sel = $db->prepare("SELECT failed_login_attempts FROM {$table} WHERE id = ? LIMIT 1");
+    $sel->execute([$id]);
+    $row = $sel->fetch(PDO::FETCH_ASSOC);
+    $attempts = ((int)($row['failed_login_attempts'] ?? 0)) + 1;
+
+    if ($attempts >= $maxAttempts) {
+        $lockedUntil = date('Y-m-d H:i:s', time() + 900); // 15 min lock
+        $upd = $db->prepare("UPDATE {$table} SET failed_login_attempts = ?, locked_until = ? WHERE id = ?");
+        $upd->execute([$attempts, $lockedUntil, $id]);
+        return [
+            'locked'       => true,
+            'locked_until' => $lockedUntil,
+            'attempts'     => $attempts,
+        ];
+    }
+
+    $upd = $db->prepare("UPDATE {$table} SET failed_login_attempts = ? WHERE id = ?");
+    $upd->execute([$attempts, $id]);
+
+    return [
+        'locked'    => false,
+        'attempts'  => $attempts,
+        'remaining' => $maxAttempts - $attempts,
+    ];
+}
+
+function resetFailedAttempts($db, $table, $id) {
+    if (!in_array($table, ['admins', 'members'], true)) return;
+    $upd = $db->prepare("UPDATE {$table} SET failed_login_attempts = 0, locked_until = NULL WHERE id = ?");
+    $upd->execute([$id]);
+}
+
+/* =====================================================================
+ * LOGIN FLOW
+ * ===================================================================== */
+
+$security = getSecuritySettings($db);
+$maxAttempts = (int)$security['max_login_attempts'];
 
 try {
     // ---------- 1) ADMINS TABLE ----------
@@ -80,11 +172,40 @@ try {
     $admin = $stmt->fetch(PDO::FETCH_ASSOC);
 
     if ($admin) {
-        if (!passwordMatches($password, $admin['password'])) {
-            http_response_code(401);
-            echo json_encode(['status' => false, 'error' => 'Invalid password']);
+        // Lock check
+        if (isAccountLocked($admin)) {
+            http_response_code(423);
+            echo json_encode([
+                'status'       => false,
+                'error'        => 'Account locked due to too many failed attempts. Try again later.',
+                'locked_until' => $admin['locked_until'],
+            ]);
             exit();
         }
+
+        if (!passwordMatches($password, $admin['password'])) {
+            $result = handleFailedAttempt($db, 'admins', (int)$admin['id'], $maxAttempts);
+
+            if (!empty($result['locked'])) {
+                http_response_code(423);
+                echo json_encode([
+                    'status'       => false,
+                    'error'        => "Too many failed attempts. Account locked for 15 minutes.",
+                    'locked_until' => $result['locked_until'],
+                ]);
+                exit();
+            }
+
+            http_response_code(401);
+            echo json_encode([
+                'status'    => false,
+                'error'     => 'Invalid password. ' . $result['remaining'] . ' attempt(s) remaining.',
+            ]);
+            exit();
+        }
+
+        // Success — reset counters
+        resetFailedAttempts($db, 'admins', (int)$admin['id']);
 
         echo json_encode([
             'status' => true,
@@ -129,16 +250,60 @@ try {
     $member = $stmt->fetch(PDO::FETCH_ASSOC);
 
     if ($member) {
-        if (!passwordMatches($password, $member['password'] ?? '')) {
-            http_response_code(401);
-            echo json_encode(['status' => false, 'error' => 'Invalid password']);
+        // Lock check
+        if (isAccountLocked($member)) {
+            http_response_code(423);
+            echo json_encode([
+                'status'       => false,
+                'error'        => 'Account locked due to too many failed attempts. Try again later.',
+                'locked_until' => $member['locked_until'],
+            ]);
             exit();
         }
+
+        // Suspension check (don't count this as failed attempt)
+        if (($member['status'] ?? '') === 'Suspended') {
+            http_response_code(403);
+            echo json_encode([
+                'status' => false,
+                'error'  => 'Account suspended. Contact admin.',
+                'reason' => $member['suspension_reason'] ?? null,
+            ]);
+            exit();
+        }
+
+        if (!passwordMatches($password, $member['password'] ?? '')) {
+            $result = handleFailedAttempt($db, 'members', (int)$member['id'], $maxAttempts);
+
+            if (!empty($result['locked'])) {
+                http_response_code(423);
+                echo json_encode([
+                    'status'       => false,
+                    'error'        => "Too many failed attempts. Account locked for 15 minutes.",
+                    'locked_until' => $result['locked_until'],
+                ]);
+                exit();
+            }
+
+            http_response_code(401);
+            echo json_encode([
+                'status'    => false,
+                'error'     => 'Invalid password. ' . $result['remaining'] . ' attempt(s) remaining.',
+            ]);
+            exit();
+        }
+
+        // Success — reset counters
+        resetFailedAttempts($db, 'members', (int)$member['id']);
+
+        // Password-expired check
+        $passwordExpired = isPasswordExpired($member, (int)$security['password_expiry_days']);
 
         echo json_encode([
             'status' => true,
             'message' => 'Login successful',
             'token' => 'member_token_' . time(),
+            'password_expired' => $passwordExpired,
             'user' => [
                 'id'                 => (int)$member['id'],
                 'username'           => $member['name'] ?? '',
