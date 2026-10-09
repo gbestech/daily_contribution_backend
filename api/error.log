@@ -679,3 +679,4 @@ Stack trace:
 )
 
 [13-Sep-2026 17:02:18 Europe/Berlin] PUT role=manager, operations count=8, encoded=["view_dashboard","create_deposit","create_withdrawal","create_transfer","view_reports","view_history","view_expenses","manage_expenses"]
+[16-Sep-2026 14:52:30 Europe/Berlin] Database connection failed: SQLSTATE[HY000] [2006] MySQL server has gone away

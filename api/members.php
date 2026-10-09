@@ -97,6 +97,7 @@ switch ($method) {
 
 // ============================================================
 // HELPER — format member row for API output
+// ✅ NEW: now returns ALL savings + profile fields
 // ============================================================
 function formatMember($m) {
     return [
@@ -120,7 +121,15 @@ function formatMember($m) {
         'next_of_kin_name' => $m['next_of_kin_name'] ?? null,
         'next_of_kin_phone' => $m['next_of_kin_phone'] ?? null,
         'next_of_kin_relationship' => $m['next_of_kin_relationship'] ?? null,
-        'savings_plan' => $m['savings_plan'] ?? null,
+
+        // ===== Savings fields =====
+        'savings_plan'    => $m['savings_plan']    ?? null,
+        'savings_method'  => $m['savings_method']  ?? null,     // ✅ NEW
+        'item_name'       => $m['item_name']       ?? null,     // ✅ NEW
+        'duration'        => $m['duration']        ?? null,     // ✅ NEW
+        'amount'          => isset($m['amount']) ? floatval($m['amount']) : null,  // ✅ NEW
+        'total_amount'    => isset($m['total_amount']) ? floatval($m['total_amount']) : null, // ✅ NEW
+
         'bank_name' => $m['bank_name'] ?? null,
         'bank_account_number' => $m['bank_account_number'] ?? null,
         'passport_photo' => $m['passport_photo'] ?? null,
@@ -174,7 +183,7 @@ function startsWith($haystack, $needle) {
 }
 
 // ============================================================
-// CREATE — minimal form, backend applies deposit charge if any balance given
+// CREATE
 // ============================================================
 function createMember($db) {
     try {
@@ -329,7 +338,8 @@ function createMember($db) {
 }
 
 // ============================================================
-// UPDATE — supports all profile fields + auto profile_completed
+// UPDATE — supports all profile fields
+// 🔧 FIXED: added savings_method, item_name, duration, amount, total_amount
 // ============================================================
 function updateMember($db, $id) {
     try {
@@ -391,21 +401,37 @@ function updateMember($db, $id) {
         $params = [];
         $newHashedPassword = null;
 
+        // 🔧 FIXED: full list of updatable fields, including savings extras
         $simpleFields = [
             'name', 'email', 'phone', 'status',
             'date_of_birth', 'gender', 'address',
             'next_of_kin_name', 'next_of_kin_phone', 'next_of_kin_relationship',
-            'savings_plan', 'bank_name', 'bank_account_number', 'passport_photo'
+            'savings_plan', 'savings_method', 'item_name', 'duration',
+            'bank_name', 'bank_account_number', 'passport_photo'
         ];
 
         foreach ($simpleFields as $f) {
-            if (isset($data[$f])) {
+            if (array_key_exists($f, $data)) {
                 $updateFields[] = "$f = ?";
-                $params[] = empty($data[$f]) ? null : $data[$f];
+                $val = $data[$f];
+                if (is_string($val) && trim($val) === '') {
+                    $val = null;
+                }
+                $params[] = $val;
             }
         }
 
-        if (isset($data['balance'])) {
+        // 🔧 FIXED: numeric fields handled separately so 0 is preserved
+        if (array_key_exists('amount', $data)) {
+            $updateFields[] = "amount = ?";
+            $params[] = floatval($data['amount'] ?? 0);
+        }
+        if (array_key_exists('total_amount', $data)) {
+            $updateFields[] = "total_amount = ?";
+            $params[] = floatval($data['total_amount'] ?? 0);
+        }
+
+        if (array_key_exists('balance', $data)) {
             $updateFields[] = "balance = ?";
             $params[] = floatval($data['balance']);
         }
@@ -429,7 +455,6 @@ function updateMember($db, $id) {
             $updateFields[] = "profile_completed = ?";
             $params[] = intval($data['profile_completed']);
         } else {
-            // Check if all required fields are present (existing + incoming)
             $merged = array_merge($currentUser, $data);
             $requiredComplete =
                 !empty($merged['date_of_birth']) &&
@@ -545,7 +570,7 @@ function updateMember($db, $id) {
 }
 
 // ============================================================
-// DELETE — soft delete if deleted_at column exists
+// DELETE
 // ============================================================
 function deleteMember($db, $id) {
     try {

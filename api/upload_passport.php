@@ -32,13 +32,31 @@ try {
     exit();
 }
 
-if (!isset($_FILES['passport'])) {
+// ============================================================
+// Accept any of these field names so the frontend can send
+// "passport", "file", or "image" — whichever it uses.
+// ============================================================
+$uploadKey = null;
+foreach (['passport', 'file', 'image'] as $k) {
+    if (isset($_FILES[$k]) && is_array($_FILES[$k])) {
+        $uploadKey = $k;
+        break;
+    }
+}
+
+if ($uploadKey === null) {
     http_response_code(400);
     echo json_encode(['success' => false, 'error' => 'No file uploaded']);
     exit();
 }
 
-$memberId = isset($_POST['memberId']) ? intval($_POST['memberId']) : 0;
+$memberId = 0;
+foreach (['memberId', 'member_id', 'id'] as $k) {
+    if (isset($_POST[$k]) && intval($_POST[$k]) > 0) {
+        $memberId = intval($_POST[$k]);
+        break;
+    }
+}
 
 if ($memberId <= 0) {
     http_response_code(400);
@@ -46,6 +64,7 @@ if ($memberId <= 0) {
     exit();
 }
 
+// Verify member exists
 $stmt = $db->prepare("SELECT id FROM members WHERE id = ?");
 $stmt->execute([$memberId]);
 if ($stmt->rowCount() === 0) {
@@ -54,7 +73,7 @@ if ($stmt->rowCount() === 0) {
     exit();
 }
 
-$file = $_FILES['passport'];
+$file = $_FILES[$uploadKey];
 
 if ($file['error'] !== UPLOAD_ERR_OK) {
     http_response_code(400);
@@ -68,6 +87,7 @@ if ($file['size'] > 3 * 1024 * 1024) {
     exit();
 }
 
+// MIME check
 $allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'];
 $finfo = finfo_open(FILEINFO_MIME_TYPE);
 $mime = finfo_file($finfo, $file['tmp_name']);
@@ -79,13 +99,27 @@ if (!in_array($mime, $allowed)) {
     exit();
 }
 
+// ============================================================
+// Ensure upload directory exists
+// ============================================================
 $uploadDir = __DIR__ . '/uploads/passports/';
 if (!is_dir($uploadDir)) {
-    mkdir($uploadDir, 0755, true);
+    @mkdir($uploadDir, 0755, true);
 }
 
+if (!is_dir($uploadDir) || !is_writable($uploadDir)) {
+    http_response_code(500);
+    echo json_encode([
+        'success' => false,
+        'error'   => 'Upload directory is not writable',
+        'path'    => $uploadDir,
+    ]);
+    exit();
+}
+
+// Extension from MIME
 $ext = 'jpg';
-if ($mime === 'image/png') $ext = 'png';
+if ($mime === 'image/png')  $ext = 'png';
 if ($mime === 'image/webp') $ext = 'webp';
 
 $filename = 'passport_' . $memberId . '_' . time() . '.' . $ext;
@@ -108,14 +142,25 @@ try {
             @unlink($oldPath);
         }
     }
-} catch (Exception $e) {}
+} catch (Exception $e) {
+    // non-fatal — continue
+}
 
+// Save filename to DB
 $stmt = $db->prepare("UPDATE members SET passport_photo = ? WHERE id = ?");
 $stmt->execute([$filename, $memberId]);
 
+// ============================================================
+// Return the filename under EVERY common key so any frontend
+// variant picks it up regardless of what it looks for.
+// ============================================================
 echo json_encode([
-    'success' => true,
-    'message' => 'Passport uploaded successfully',
-    'filename' => $filename,
-    'url' => '/api/uploads/passports/' . $filename
+    'success'        => true,
+    'message'        => 'Passport uploaded successfully',
+    'filename'       => $filename,
+    'file'           => $filename,
+    'passport_photo' => $filename,
+    'passportPhoto'  => $filename,
+    'url'            => '/api/uploads/passports/' . $filename,
+    'memberId'       => $memberId,
 ]);
