@@ -1,7 +1,9 @@
 <?php
 // api/login.php
 error_reporting(E_ALL);
-ini_set('display_errors', 1);
+ini_set('display_errors', 0);
+ini_set('log_errors', 1);
+ini_set('error_log', __DIR__ . '/error.log');
 
 header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Methods: POST, OPTIONS");
@@ -41,13 +43,8 @@ if ($email === '' || $password === '') {
     exit();
 }
 
-/* =====================================================================
- * SECURITY HELPERS (inline, so no extra file is required)
- * ===================================================================== */
+/* ================= SECURITY HELPERS ================= */
 
-/**
- * Universal password check — works with BOTH hashed and plain values
- */
 function passwordMatches($plainInput, $storedValue) {
     if ($storedValue === null || $storedValue === '') return false;
 
@@ -62,15 +59,12 @@ function passwordMatches($plainInput, $storedValue) {
 
     if ($looksHashed) {
         if (password_verify($plainInput, $storedValue)) return true;
-        return $plainInput === $storedValue; // dev fallback
+        return $plainInput === $storedValue;
     }
 
     return $plainInput === $storedValue;
 }
 
-/**
- * Read the 'security' settings row with defaults
- */
 function getSecuritySettings($db) {
     static $cached = null;
     if ($cached !== null) return $cached;
@@ -94,7 +88,7 @@ function getSecuritySettings($db) {
                 return $cached;
             }
         }
-    } catch (Exception $e) { /* use defaults */ }
+    } catch (Exception $e) { }
 
     $cached = $defaults;
     return $cached;
@@ -111,22 +105,16 @@ function isPasswordExpired($row, $expiryDays) {
     return (time() - strtotime($row['password_changed_at'])) > ($expiryDays * 86400);
 }
 
-/**
- * Apply lock / failed-attempt logic for a given table+id.
- * Returns an array describing the result, or null on success.
- */
 function handleFailedAttempt($db, $table, $id, $maxAttempts) {
-    // Only these table names are allowed — avoids SQL injection risk
     if (!in_array($table, ['admins', 'members'], true)) return null;
 
-    // Fetch current count
     $sel = $db->prepare("SELECT failed_login_attempts FROM {$table} WHERE id = ? LIMIT 1");
     $sel->execute([$id]);
     $row = $sel->fetch(PDO::FETCH_ASSOC);
     $attempts = ((int)($row['failed_login_attempts'] ?? 0)) + 1;
 
     if ($attempts >= $maxAttempts) {
-        $lockedUntil = date('Y-m-d H:i:s', time() + 900); // 15 min lock
+        $lockedUntil = date('Y-m-d H:i:s', time() + 900);
         $upd = $db->prepare("UPDATE {$table} SET failed_login_attempts = ?, locked_until = ? WHERE id = ?");
         $upd->execute([$attempts, $lockedUntil, $id]);
         return [
@@ -152,9 +140,57 @@ function resetFailedAttempts($db, $table, $id) {
     $upd->execute([$id]);
 }
 
-/* =====================================================================
- * LOGIN FLOW
- * ===================================================================== */
+/**
+ * Look up branch name/code for a given branch_id.
+ */
+function fetchBranchInfo($db, $branchId) {
+    if (!$branchId) return null;
+    try {
+        $stmt = $db->prepare(
+            "SELECT id, name, code, status FROM branches WHERE id = ? LIMIT 1"
+        );
+        $stmt->execute([$branchId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$row) return null;
+        return [
+            'id'     => (int)$row['id'],
+            'name'   => $row['name']   ?? null,
+            'code'   => $row['code']   ?? null,
+            'status' => $row['status'] ?? null,
+        ];
+    } catch (Exception $e) {
+        error_log("login.php fetchBranchInfo error: " . $e->getMessage());
+        return null;
+    }
+}
+
+/**
+ * Copy branch fields (id/name/code) into a user payload.
+ */
+function attachBranchFields(array $userPayload, $db) {
+    $branchId =
+        $userPayload['branch_id'] ??
+        $userPayload['branchId'] ??
+        null;
+
+    $branchId = $branchId !== null ? (int)$branchId : null;
+
+    $userPayload['branch_id'] = $branchId;
+    $userPayload['branch']    = null;
+
+    if ($branchId) {
+        $info = fetchBranchInfo($db, $branchId);
+        if ($info) {
+            $userPayload['branch']      = $info;
+            $userPayload['branch_name'] = $info['name'];
+            $userPayload['branch_code'] = $info['code'];
+        }
+    }
+
+    return $userPayload;
+}
+
+/* ================= LOGIN FLOW ================= */
 
 $security = getSecuritySettings($db);
 $maxAttempts = (int)$security['max_login_attempts'];
@@ -172,7 +208,6 @@ try {
     $admin = $stmt->fetch(PDO::FETCH_ASSOC);
 
     if ($admin) {
-        // Lock check
         if (isAccountLocked($admin)) {
             http_response_code(423);
             echo json_encode([
@@ -204,36 +239,40 @@ try {
             exit();
         }
 
-        // Success — reset counters
         resetFailedAttempts($db, 'admins', (int)$admin['id']);
 
+        $userPayload = [
+            'id'                 => (int)$admin['id'],
+            'username'           => $admin['username'] ?? '',
+            'email'              => $admin['email'] ?? '',
+            'full_name'          => $admin['full_name'] ?? $admin['username'] ?? '',
+            'name'               => $admin['full_name'] ?? $admin['username'] ?? '',
+            'role'               => $admin['role'] ?? 'administrator',
+            'branch_id'          => isset($admin['branch_id']) ? (int)$admin['branch_id'] : null,
+            'phone'              => $admin['phone'] ?? '',
+            'address'            => '',
+            'is_active'          => true,
+            'balance'            => 0,
+            'accountNumber'      => 'ADMIN001',
+            'account_number'     => 'ADMIN001',
+            'membership_number'  => 'ADMIN001',
+            'membershipType'     => 'Standard',
+            'membership_type'    => 'Standard',
+            'joinDate'           => date('Y-m-d'),
+            'join_date'          => date('Y-m-d'),
+            'status'             => 'Active',
+            'profile_completed'  => 1,
+            'passport_photo'     => null,
+            'created_at'         => $admin['created_at'] ?? date('Y-m-d H:i:s'),
+        ];
+
+        $userPayload = attachBranchFields($userPayload, $db);
+
         echo json_encode([
-            'status' => true,
+            'status'  => true,
             'message' => 'Login successful',
-            'token' => 'admin_token_' . time(),
-            'user' => [
-                'id'                 => (int)$admin['id'],
-                'username'           => $admin['username'] ?? '',
-                'email'              => $admin['email'] ?? '',
-                'full_name'          => $admin['full_name'] ?? $admin['username'] ?? '',
-                'name'               => $admin['full_name'] ?? $admin['username'] ?? '',
-                'role'               => $admin['role'] ?? 'administrator',
-                'phone'              => $admin['phone'] ?? '',
-                'address'            => '',
-                'is_active'          => true,
-                'balance'            => 0,
-                'accountNumber'      => 'ADMIN001',
-                'account_number'     => 'ADMIN001',
-                'membership_number'  => 'ADMIN001',
-                'membershipType'     => 'Standard',
-                'membership_type'    => 'Standard',
-                'joinDate'           => date('Y-m-d'),
-                'join_date'          => date('Y-m-d'),
-                'status'             => 'Active',
-                'profile_completed'  => 1,
-                'passport_photo'     => null,
-                'created_at'         => $admin['created_at'] ?? date('Y-m-d H:i:s'),
-            ],
+            'token'   => 'admin_token_' . time(),
+            'user'    => $userPayload,
         ]);
         exit();
     }
@@ -250,7 +289,6 @@ try {
     $member = $stmt->fetch(PDO::FETCH_ASSOC);
 
     if ($member) {
-        // Lock check
         if (isAccountLocked($member)) {
             http_response_code(423);
             echo json_encode([
@@ -261,7 +299,6 @@ try {
             exit();
         }
 
-        // Suspension check (don't count this as failed attempt)
         if (($member['status'] ?? '') === 'Suspended') {
             http_response_code(403);
             echo json_encode([
@@ -293,40 +330,43 @@ try {
             exit();
         }
 
-        // Success — reset counters
         resetFailedAttempts($db, 'members', (int)$member['id']);
 
-        // Password-expired check
         $passwordExpired = isPasswordExpired($member, (int)$security['password_expiry_days']);
 
+        $userPayload = [
+            'id'                 => (int)$member['id'],
+            'username'           => $member['name'] ?? '',
+            'name'               => $member['name'] ?? '',
+            'full_name'          => $member['name'] ?? '',
+            'email'              => $member['email'] ?? '',
+            'phone'              => $member['phone'] ?? '',
+            'role'               => $member['role'] ?? 'member',
+            'branch_id'          => isset($member['branch_id']) ? (int)$member['branch_id'] : null,
+            'address'            => $member['address'] ?? '',
+            'is_active'          => ($member['status'] ?? '') === 'Active',
+            'balance'            => floatval($member['balance'] ?? 0),
+            'accountNumber'      => $member['account_number'] ?? 'N/A',
+            'account_number'     => $member['account_number'] ?? 'N/A',
+            'membership_number'  => $member['account_number'] ?? 'N/A',
+            'membershipType'     => $member['membership_type'] ?? 'Standard',
+            'membership_type'    => $member['membership_type'] ?? 'Standard',
+            'joinDate'           => $member['join_date'] ?? date('Y-m-d'),
+            'join_date'          => $member['join_date'] ?? date('Y-m-d'),
+            'status'             => $member['status'] ?? 'Active',
+            'profile_completed'  => (int)($member['profile_completed'] ?? 0),
+            'passport_photo'     => $member['passport_photo'] ?? null,
+            'created_at'         => $member['created_at'] ?? date('Y-m-d H:i:s'),
+        ];
+
+        $userPayload = attachBranchFields($userPayload, $db);
+
         echo json_encode([
-            'status' => true,
+            'status'  => true,
             'message' => 'Login successful',
-            'token' => 'member_token_' . time(),
+            'token'   => 'member_token_' . time(),
             'password_expired' => $passwordExpired,
-            'user' => [
-                'id'                 => (int)$member['id'],
-                'username'           => $member['name'] ?? '',
-                'name'               => $member['name'] ?? '',
-                'full_name'          => $member['name'] ?? '',
-                'email'              => $member['email'] ?? '',
-                'phone'              => $member['phone'] ?? '',
-                'role'               => $member['role'] ?? 'member',
-                'address'            => $member['address'] ?? '',
-                'is_active'          => ($member['status'] ?? '') === 'Active',
-                'balance'            => floatval($member['balance'] ?? 0),
-                'accountNumber'      => $member['account_number'] ?? 'N/A',
-                'account_number'     => $member['account_number'] ?? 'N/A',
-                'membership_number'  => $member['account_number'] ?? 'N/A',
-                'membershipType'     => $member['membership_type'] ?? 'Standard',
-                'membership_type'    => $member['membership_type'] ?? 'Standard',
-                'joinDate'           => $member['join_date'] ?? date('Y-m-d'),
-                'join_date'          => $member['join_date'] ?? date('Y-m-d'),
-                'status'             => $member['status'] ?? 'Active',
-                'profile_completed'  => (int)($member['profile_completed'] ?? 0),
-                'passport_photo'     => $member['passport_photo'] ?? null,
-                'created_at'         => $member['created_at'] ?? date('Y-m-d H:i:s'),
-            ],
+            'user'    => $userPayload,
         ]);
         exit();
     }
@@ -335,6 +375,7 @@ try {
     echo json_encode(['status' => false, 'error' => 'Invalid email or password']);
 
 } catch (Exception $e) {
+    error_log("login.php error: " . $e->getMessage());
     http_response_code(500);
-    echo json_encode(['status' => false, 'error' => 'Login failed: ' . $e->getMessage()]);
+    echo json_encode(['status' => false, 'error' => 'Login failed. Please try again.']);
 }

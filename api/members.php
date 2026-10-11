@@ -11,7 +11,7 @@ while (ob_get_level()) {
 
 header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS");
-header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With, Accept");
+header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With, Accept, X-User-Role, X-User-Branch-Id");
 header("Access-Control-Allow-Credentials: true");
 header("Access-Control-Max-Age: 86400");
 
@@ -38,6 +38,47 @@ if (!$db) {
     echo json_encode(['error' => 'Database connection failed']);
     exit();
 }
+
+// ============================================================
+// BRANCH CONTEXT
+// ============================================================
+
+// 🆕 Admin-wide fetch flag (used by manager dropdowns)
+$FETCH_ALL = isset($_GET['all']) && $_GET['all'] == '1';
+
+// If ?all=1, gate it to admins only.
+if ($FETCH_ALL) {
+    $reqRole = strtolower(trim($_SERVER['HTTP_X_USER_ROLE'] ?? ''));
+    if (!in_array($reqRole, ['admin', 'administrator'], true)) {
+        http_response_code(403);
+        echo json_encode(['error' => 'Admin access required for ?all=1']);
+        exit();
+    }
+}
+
+// 1) Prefer ?branch_id= from the query string
+$requestedBranchId = isset($_GET['branch_id']) ? (int)$_GET['branch_id'] : 0;
+
+// 2) Fall back to JSON body { branch_id: X } for POST/PUT
+if ($requestedBranchId <= 0 && in_array($_SERVER['REQUEST_METHOD'], ['POST', 'PUT', 'PATCH'], true)) {
+    $rawBody = file_get_contents('php://input');
+    $bodyData = json_decode($rawBody, true);
+    if (is_array($bodyData) && !empty($bodyData['branch_id'])) {
+        $requestedBranchId = (int)$bodyData['branch_id'];
+    }
+}
+
+// 3) Last resort: first active branch
+if ($requestedBranchId <= 0) {
+    try {
+        $row = $db->query("SELECT id FROM branches WHERE status = 'active' ORDER BY id ASC LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+        $requestedBranchId = $row ? (int)$row['id'] : 1;
+    } catch (Exception $e) {
+        $requestedBranchId = 1;
+    }
+}
+
+$BRANCH_ID = $requestedBranchId;
 
 $method = $_SERVER['REQUEST_METHOD'];
 $requestUri = $_SERVER['REQUEST_URI'];
@@ -97,7 +138,6 @@ switch ($method) {
 
 // ============================================================
 // HELPER — format member row for API output
-// ✅ NEW: now returns ALL savings + profile fields
 // ============================================================
 function formatMember($m) {
     return [
@@ -124,20 +164,25 @@ function formatMember($m) {
 
         // ===== Savings fields =====
         'savings_plan'    => $m['savings_plan']    ?? null,
-        'savings_method'  => $m['savings_method']  ?? null,     // ✅ NEW
-        'item_name'       => $m['item_name']       ?? null,     // ✅ NEW
-        'duration'        => $m['duration']        ?? null,     // ✅ NEW
-        'amount'          => isset($m['amount']) ? floatval($m['amount']) : null,  // ✅ NEW
-        'total_amount'    => isset($m['total_amount']) ? floatval($m['total_amount']) : null, // ✅ NEW
+        'savings_method'  => $m['savings_method']  ?? null,
+        'item_name'       => $m['item_name']       ?? null,
+        'duration'        => $m['duration']        ?? null,
+        'amount'          => isset($m['amount']) ? floatval($m['amount']) : null,
+        'total_amount'    => isset($m['total_amount']) ? floatval($m['total_amount']) : null,
 
         'bank_name' => $m['bank_name'] ?? null,
         'bank_account_number' => $m['bank_account_number'] ?? null,
         'passport_photo' => $m['passport_photo'] ?? null,
         'profile_completed' => intval($m['profile_completed'] ?? 0),
+        'branch_id' => isset($m['branch_id']) ? (int)$m['branch_id'] : null,
     ];
 }
 
+// ============================================================
+// GET ALL — filtered by branch, OR every branch if ?all=1
+// ============================================================
 function getMembers($db) {
+    global $BRANCH_ID, $FETCH_ALL;
     try {
         $tableCheck = $db->query("SHOW TABLES LIKE 'members'");
         if ($tableCheck->rowCount() == 0) {
@@ -145,7 +190,14 @@ function getMembers($db) {
             return;
         }
 
-        $stmt = $db->query("SELECT * FROM members ORDER BY id DESC");
+        if (!empty($FETCH_ALL)) {
+            // 🆕 All branches — only reachable by admins (gated above)
+            $stmt = $db->prepare("SELECT * FROM members ORDER BY id DESC");
+            $stmt->execute();
+        } else {
+            $stmt = $db->prepare("SELECT * FROM members WHERE branch_id = ? ORDER BY id DESC");
+            $stmt->execute([$BRANCH_ID]);
+        }
         $members = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
         $formatted = [];
@@ -153,17 +205,30 @@ function getMembers($db) {
             $formatted[] = formatMember($m);
         }
 
-        echo json_encode(['members' => $formatted]);
+        echo json_encode([
+            'members'   => $formatted,
+            'branch_id' => $BRANCH_ID,
+            'all'       => !empty($FETCH_ALL) ? 1 : 0,
+        ]);
     } catch (Exception $e) {
         http_response_code(500);
         echo json_encode(['error' => 'Failed to fetch members: ' . $e->getMessage()]);
     }
 }
 
+// ============================================================
+// GET ONE — filtered by branch
+// ============================================================
 function getMember($db, $id) {
+    global $BRANCH_ID, $FETCH_ALL;
     try {
-        $stmt = $db->prepare("SELECT * FROM members WHERE id = ?");
-        $stmt->execute([$id]);
+        if (!empty($FETCH_ALL)) {
+            $stmt = $db->prepare("SELECT * FROM members WHERE id = ?");
+            $stmt->execute([$id]);
+        } else {
+            $stmt = $db->prepare("SELECT * FROM members WHERE id = ? AND branch_id = ?");
+            $stmt->execute([$id, $BRANCH_ID]);
+        }
         $member = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if ($member) {
@@ -183,9 +248,10 @@ function startsWith($haystack, $needle) {
 }
 
 // ============================================================
-// CREATE
+// CREATE — forces branch_id = current branch
 // ============================================================
 function createMember($db) {
+    global $BRANCH_ID;
     try {
         $input = file_get_contents('php://input');
         $data = json_decode($input, true);
@@ -225,20 +291,20 @@ function createMember($db) {
             $phone = $cleaned;
         }
 
-        $checkStmt = $db->prepare("SELECT id FROM members WHERE email = ?");
-        $checkStmt->execute([$email]);
+        $checkStmt = $db->prepare("SELECT id FROM members WHERE email = ? AND branch_id = ?");
+        $checkStmt->execute([$email, $BRANCH_ID]);
         if ($checkStmt->rowCount() > 0) {
             http_response_code(409);
-            echo json_encode(['error' => 'Email already exists']);
+            echo json_encode(['error' => 'Email already exists in this branch']);
             return;
         }
 
         if ($phone) {
-            $phoneCheckStmt = $db->prepare("SELECT id FROM members WHERE phone = ?");
-            $phoneCheckStmt->execute([$phone]);
+            $phoneCheckStmt = $db->prepare("SELECT id FROM members WHERE phone = ? AND branch_id = ?");
+            $phoneCheckStmt->execute([$phone, $BRANCH_ID]);
             if ($phoneCheckStmt->rowCount() > 0) {
                 http_response_code(409);
-                echo json_encode(['error' => 'Phone already exists']);
+                echo json_encode(['error' => 'Phone already exists in this branch']);
                 return;
             }
         }
@@ -264,13 +330,15 @@ function createMember($db) {
 
         try {
             $stmt = $db->prepare("
-                INSERT INTO members (account_number, name, email, phone, membership_type, join_date, status, balance, role, password)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO members
+                    (account_number, name, email, phone, membership_type, join_date, status, balance, role, password, branch_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ");
 
             $result = $stmt->execute([
                 $accountNumber, $name, $email, $phone, $membershipType,
-                $joinDate, $status, $netInitialBalance, $role, $hashedPassword
+                $joinDate, $status, $netInitialBalance, $role, $hashedPassword,
+                $BRANCH_ID
             ]);
 
             if (!$result) {
@@ -282,29 +350,59 @@ function createMember($db) {
             if ($role === 'admin' || $role === 'administrator') {
                 $tableCheck = $db->query("SHOW TABLES LIKE 'admins'");
                 if ($tableCheck->rowCount() > 0) {
-                    $insertAdmin = $db->prepare("
-                        INSERT INTO admins (username, email, password, role, phone, full_name, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, NOW())
-                    ");
-                    $insertAdmin->execute([
-                        $name, $email, $hashedPassword, $role, $phone, $name
-                    ]);
+                    $colCheck = $db->query("SHOW COLUMNS FROM admins LIKE 'branch_id'");
+                    $adminsHasBranch = $colCheck->rowCount() > 0;
+
+                    if ($adminsHasBranch) {
+                        $insertAdmin = $db->prepare("
+                            INSERT INTO admins (username, email, password, role, phone, full_name, branch_id, created_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
+                        ");
+                        $insertAdmin->execute([
+                            $name, $email, $hashedPassword, $role, $phone, $name, $BRANCH_ID
+                        ]);
+                    } else {
+                        $insertAdmin = $db->prepare("
+                            INSERT INTO admins (username, email, password, role, phone, full_name, created_at)
+                            VALUES (?, ?, ?, ?, ?, ?, NOW())
+                        ");
+                        $insertAdmin->execute([
+                            $name, $email, $hashedPassword, $role, $phone, $name
+                        ]);
+                    }
                 }
             }
 
             if ($initialBalance > 0) {
                 $tableCheck = $db->query("SHOW TABLES LIKE 'transactions'");
                 if ($tableCheck->rowCount() > 0) {
-                    $txnStmt = $db->prepare("
-                        INSERT INTO transactions 
-                            (member_id, member_name, account_number, type, amount, charge, rate, net_amount,
-                             date, status, description)
-                        VALUES (?, ?, ?, 'deposit', ?, ?, ?, ?, ?, 'approved', 'Initial balance')
-                    ");
-                    $txnStmt->execute([
-                        $id, $name, $accountNumber, $initialBalance,
-                        $chargeAmount, $chargeRate, $netInitialBalance, $joinDate
-                    ]);
+                    $colCheck = $db->query("SHOW COLUMNS FROM transactions LIKE 'branch_id'");
+                    $txnHasBranch = $colCheck->rowCount() > 0;
+
+                    if ($txnHasBranch) {
+                        $txnStmt = $db->prepare("
+                            INSERT INTO transactions
+                                (member_id, member_name, account_number, type, amount, charge, rate, net_amount,
+                                 date, status, description, branch_id)
+                            VALUES (?, ?, ?, 'deposit', ?, ?, ?, ?, ?, 'approved', 'Initial balance', ?)
+                        ");
+                        $txnStmt->execute([
+                            $id, $name, $accountNumber, $initialBalance,
+                            $chargeAmount, $chargeRate, $netInitialBalance, $joinDate,
+                            $BRANCH_ID
+                        ]);
+                    } else {
+                        $txnStmt = $db->prepare("
+                            INSERT INTO transactions
+                                (member_id, member_name, account_number, type, amount, charge, rate, net_amount,
+                                 date, status, description)
+                            VALUES (?, ?, ?, 'deposit', ?, ?, ?, ?, ?, 'approved', 'Initial balance')
+                        ");
+                        $txnStmt->execute([
+                            $id, $name, $accountNumber, $initialBalance,
+                            $chargeAmount, $chargeRate, $netInitialBalance, $joinDate
+                        ]);
+                    }
                 }
             }
 
@@ -338,10 +436,10 @@ function createMember($db) {
 }
 
 // ============================================================
-// UPDATE — supports all profile fields
-// 🔧 FIXED: added savings_method, item_name, duration, amount, total_amount
+// UPDATE — scoped to the current branch
 // ============================================================
 function updateMember($db, $id) {
+    global $BRANCH_ID, $FETCH_ALL;
     try {
         $input = file_get_contents('php://input');
         $data = json_decode($input, true);
@@ -352,8 +450,13 @@ function updateMember($db, $id) {
             return;
         }
 
-        $stmt = $db->prepare("SELECT * FROM members WHERE id = ?");
-        $stmt->execute([$id]);
+        if (!empty($FETCH_ALL)) {
+            $stmt = $db->prepare("SELECT * FROM members WHERE id = ?");
+            $stmt->execute([$id]);
+        } else {
+            $stmt = $db->prepare("SELECT * FROM members WHERE id = ? AND branch_id = ?");
+            $stmt->execute([$id, $BRANCH_ID]);
+        }
         $currentUser = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if (!$currentUser) {
@@ -362,9 +465,12 @@ function updateMember($db, $id) {
             return;
         }
 
+        // Use the actual branch of the row for uniqueness checks
+        $rowBranchId = (int)($currentUser['branch_id'] ?? $BRANCH_ID);
+
         if (isset($data['email']) && !empty($data['email']) && $data['email'] !== $currentUser['email']) {
-            $emailCheckStmt = $db->prepare("SELECT id FROM members WHERE email = ? AND id != ?");
-            $emailCheckStmt->execute([$data['email'], $id]);
+            $emailCheckStmt = $db->prepare("SELECT id FROM members WHERE email = ? AND id != ? AND branch_id = ?");
+            $emailCheckStmt->execute([$data['email'], $id, $rowBranchId]);
             if ($emailCheckStmt->rowCount() > 0) {
                 http_response_code(409);
                 echo json_encode(['error' => 'Email already exists']);
@@ -387,8 +493,8 @@ function updateMember($db, $id) {
             $data['phone'] = $cleaned;
 
             if ($data['phone'] !== ($currentUser['phone'] ?? '')) {
-                $phoneCheckStmt = $db->prepare("SELECT id FROM members WHERE phone = ? AND id != ?");
-                $phoneCheckStmt->execute([$data['phone'], $id]);
+                $phoneCheckStmt = $db->prepare("SELECT id FROM members WHERE phone = ? AND id != ? AND branch_id = ?");
+                $phoneCheckStmt->execute([$data['phone'], $id, $rowBranchId]);
                 if ($phoneCheckStmt->rowCount() > 0) {
                     http_response_code(409);
                     echo json_encode(['error' => 'Phone already exists']);
@@ -401,7 +507,6 @@ function updateMember($db, $id) {
         $params = [];
         $newHashedPassword = null;
 
-        // 🔧 FIXED: full list of updatable fields, including savings extras
         $simpleFields = [
             'name', 'email', 'phone', 'status',
             'date_of_birth', 'gender', 'address',
@@ -421,7 +526,6 @@ function updateMember($db, $id) {
             }
         }
 
-        // 🔧 FIXED: numeric fields handled separately so 0 is preserved
         if (array_key_exists('amount', $data)) {
             $updateFields[] = "amount = ?";
             $params[] = floatval($data['amount'] ?? 0);
@@ -450,7 +554,6 @@ function updateMember($db, $id) {
             $params[] = $newHashedPassword;
         }
 
-        // Handle profile_completed auto-detection
         if (isset($data['profile_completed'])) {
             $updateFields[] = "profile_completed = ?";
             $params[] = intval($data['profile_completed']);
@@ -479,12 +582,20 @@ function updateMember($db, $id) {
             return;
         }
 
-        $params[] = $id;
+        // WHERE clause — use ?all=1 to allow cross-branch update by admins
+        if (!empty($FETCH_ALL)) {
+            $params[] = $id;
+            $whereSql = "WHERE id = ?";
+        } else {
+            $params[] = $id;
+            $params[] = $BRANCH_ID;
+            $whereSql = "WHERE id = ? AND branch_id = ?";
+        }
 
         $db->beginTransaction();
 
         try {
-            $sql = "UPDATE members SET " . implode(", ", $updateFields) . " WHERE id = ?";
+            $sql = "UPDATE members SET " . implode(", ", $updateFields) . " " . $whereSql;
             $stmt = $db->prepare($sql);
             $result = $stmt->execute($params);
 
@@ -570,12 +681,18 @@ function updateMember($db, $id) {
 }
 
 // ============================================================
-// DELETE
+// DELETE — scoped to the current branch
 // ============================================================
 function deleteMember($db, $id) {
+    global $BRANCH_ID, $FETCH_ALL;
     try {
-        $stmt = $db->prepare("SELECT * FROM members WHERE id = ?");
-        $stmt->execute([$id]);
+        if (!empty($FETCH_ALL)) {
+            $stmt = $db->prepare("SELECT * FROM members WHERE id = ?");
+            $stmt->execute([$id]);
+        } else {
+            $stmt = $db->prepare("SELECT * FROM members WHERE id = ? AND branch_id = ?");
+            $stmt->execute([$id, $BRANCH_ID]);
+        }
         $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if (!$user) {
@@ -629,7 +746,11 @@ function deleteMember($db, $id) {
     }
 }
 
+// ============================================================
+// BULK ACTION — scoped to the current branch
+// ============================================================
 function bulkAction($db) {
+    global $BRANCH_ID;
     try {
         $input = file_get_contents('php://input');
         $data = json_decode($input, true);
@@ -656,17 +777,17 @@ function bulkAction($db) {
         try {
             switch ($action) {
                 case 'activate':
-                    $sql = "UPDATE members SET status = 'Active' WHERE id IN ($placeholders)";
+                    $sql = "UPDATE members SET status = 'Active' WHERE branch_id = ? AND id IN ($placeholders)";
                     $stmt = $db->prepare($sql);
-                    $result = $stmt->execute($userIds);
+                    $result = $stmt->execute(array_merge([$BRANCH_ID], $userIds));
                     $count = $stmt->rowCount();
                     $actionMessage = 'activated';
                     break;
 
                 case 'suspend':
-                    $sql = "UPDATE members SET status = 'Suspended' WHERE id IN ($placeholders)";
+                    $sql = "UPDATE members SET status = 'Suspended' WHERE branch_id = ? AND id IN ($placeholders)";
                     $stmt = $db->prepare($sql);
-                    $result = $stmt->execute($userIds);
+                    $result = $stmt->execute(array_merge([$BRANCH_ID], $userIds));
                     $count = $stmt->rowCount();
                     $actionMessage = 'suspended';
                     break;
@@ -674,17 +795,18 @@ function bulkAction($db) {
                 case 'delete':
                     $count = 0;
                     foreach ($userIds as $uid) {
-                        $getUser = $db->prepare("SELECT * FROM members WHERE id = ?");
-                        $getUser->execute([$uid]);
+                        $getUser = $db->prepare("SELECT * FROM members WHERE id = ? AND branch_id = ?");
+                        $getUser->execute([$uid, $BRANCH_ID]);
                         $u = $getUser->fetch(PDO::FETCH_ASSOC);
                         if (!$u) continue;
 
                         $colCheck = $db->query("SHOW COLUMNS FROM members LIKE 'deleted_at'");
                         if ($colCheck->rowCount() > 0) {
-                            $db->prepare("UPDATE members SET deleted_at = NOW(), status = 'Deleted' WHERE id = ?")
-                               ->execute([$uid]);
+                            $db->prepare("UPDATE members SET deleted_at = NOW(), status = 'Deleted' WHERE id = ? AND branch_id = ?")
+                               ->execute([$uid, $BRANCH_ID]);
                         } else {
-                            $db->prepare("DELETE FROM members WHERE id = ?")->execute([$uid]);
+                            $db->prepare("DELETE FROM members WHERE id = ? AND branch_id = ?")
+                               ->execute([$uid, $BRANCH_ID]);
                         }
 
                         $tc = $db->query("SHOW TABLES LIKE 'admins'");

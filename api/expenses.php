@@ -1,5 +1,5 @@
 <?php
-// api/expenses.php
+// api/expenses.php — branch-aware
 error_reporting(E_ALL);
 ini_set('display_errors', 0);
 ini_set('log_errors', 1);
@@ -26,6 +26,43 @@ catch (Exception $e) {
 
 if (!$db) { http_response_code(500); echo json_encode(['error' => 'Database connection failed']); exit(); }
 
+// ============================================================
+// BRANCH CONTEXT
+// ============================================================
+$requestedBranchId = isset($_GET['branch_id']) ? (int)$_GET['branch_id'] : 0;
+
+if ($requestedBranchId <= 0) {
+    try {
+        $row = $db->query("SELECT id FROM branches WHERE status = 'active' ORDER BY id ASC LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+        $requestedBranchId = $row ? (int)$row['id'] : 1;
+    } catch (Exception $e) {
+        $requestedBranchId = 1;
+    }
+}
+
+$BRANCH_ID = $requestedBranchId;
+
+// ============================================================
+// AUTO-MIGRATION: ensure branch_id exists on the expenses table
+// ============================================================
+try {
+    $tableCheck = $db->query("SHOW TABLES LIKE 'expenses'");
+    if ($tableCheck->rowCount() > 0) {
+        $cols = [];
+        $stmt = $db->query("SHOW COLUMNS FROM expenses");
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $c) {
+            $cols[strtolower($c['Field'])] = true;
+        }
+        if (!isset($cols['branch_id'])) {
+            $db->exec("ALTER TABLE expenses ADD COLUMN branch_id INT NOT NULL DEFAULT 1 AFTER id");
+        }
+        // Back-fill any orphans
+        $db->exec("UPDATE expenses SET branch_id = 1 WHERE branch_id IS NULL OR branch_id = 0");
+    }
+} catch (Exception $e) {
+    // silent
+}
+
 $method = $_SERVER['REQUEST_METHOD'];
 
 // Extract ID and sub-action (approve / reject) from URL
@@ -43,8 +80,6 @@ foreach ($pathParts as $i => $part) {
 
 /**
  * Safely read JSON body — reads php://input ONLY ONCE.
- * Returns [] if the body is empty (e.g. approve/reject requests).
- * Sends a 400 and exits if the body exists but is malformed.
  */
 function getJsonBody($allowEmpty = false) {
     $raw = file_get_contents('php://input');
@@ -70,6 +105,7 @@ function getJsonBody($allowEmpty = false) {
 function formatExpense($e) {
     return [
         'id'               => (int)$e['id'],
+        'branch_id'        => isset($e['branch_id']) ? (int)$e['branch_id'] : null, // 🆕
         'category'         => $e['category'] ?? 'Other',
         'description'      => $e['description'] ?? '',
         'amount'           => (float)($e['amount'] ?? 0),
@@ -93,23 +129,22 @@ switch ($method) {
     case 'GET':
         try {
             if ($id) {
-                $stmt = $db->prepare("SELECT * FROM expenses WHERE id = ?");
-                $stmt->execute([$id]);
+                $stmt = $db->prepare("SELECT * FROM expenses WHERE id = ? AND branch_id = ?");
+                $stmt->execute([$id, $BRANCH_ID]);
                 $exp = $stmt->fetch(PDO::FETCH_ASSOC);
-                if (!$exp) { http_response_code(404); echo json_encode(['error' => 'Expense not found']); exit(); }
+                if (!$exp) { http_response_code(404); echo json_encode(['error' => 'Expense not found in this branch']); exit(); }
                 echo json_encode(['expense' => formatExpense($exp)]);
                 break;
             }
 
-            $where = []; $params = [];
+            $where = ["branch_id = ?"]; $params = [$BRANCH_ID];
 
             if (!empty($_GET['from']))     { $where[] = "expense_date >= ?"; $params[] = $_GET['from']; }
             if (!empty($_GET['to']))       { $where[] = "expense_date <= ?"; $params[] = $_GET['to']; }
             if (!empty($_GET['category'])) { $where[] = "category = ?";      $params[] = $_GET['category']; }
             if (!empty($_GET['status']))   { $where[] = "status = ?";        $params[] = $_GET['status']; }
 
-            $sql = "SELECT * FROM expenses";
-            if ($where) $sql .= " WHERE " . implode(" AND ", $where);
+            $sql = "SELECT * FROM expenses WHERE " . implode(" AND ", $where);
             $sql .= " ORDER BY expense_date DESC, id DESC";
 
             $stmt = $db->prepare($sql);
@@ -129,6 +164,7 @@ switch ($method) {
                 'total'         => $total,
                 'pending_total' => $pendingTotal,
                 'count'         => count($formatted),
+                'branch_id'     => $BRANCH_ID,
             ]);
         } catch (Exception $e) {
             http_response_code(500);
@@ -151,7 +187,7 @@ switch ($method) {
             $recorded_by = $data['recorded_by'] ?? null;
             $recorded_by_role = strtolower($data['recorded_by_role'] ?? 'member');
 
-            // Fallback: if the frontend uses title/requested_by, map them
+            // Fallback mapping
             if ($category === '' && !empty($data['title'])) {
                 $category = 'General';
             }
@@ -175,13 +211,15 @@ switch ($method) {
             $approved_by = ($isAdmin && $status === 'approved') ? $recorded_by : null;
             $approved_at = ($isAdmin && $status === 'approved') ? date('Y-m-d H:i:s') : null;
 
+            // 🆕 branch_id included in the INSERT
             $stmt = $db->prepare("
                 INSERT INTO expenses
-                    (category, description, amount, expense_date, payment_method,
+                    (branch_id, category, description, amount, expense_date, payment_method,
                      reference, vendor, status, recorded_by, approved_by, approved_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ");
             $stmt->execute([
+                $BRANCH_ID,
                 $category, $description, $amount, $date, $methodVal,
                 $reference, $vendor, $status, $recorded_by, $approved_by, $approved_at
             ]);
@@ -197,6 +235,7 @@ switch ($method) {
                     ? 'Expense recorded and approved'
                     : 'Expense recorded — pending admin approval',
                 'expense' => formatExpense($newExpense),
+                'branch_id' => $BRANCH_ID,
             ]);
         } catch (Exception $e) {
             http_response_code(500);
@@ -211,15 +250,15 @@ switch ($method) {
         try {
             // -------- APPROVE / REJECT sub-actions --------
             if ($subAction === 'approve' || $subAction === 'reject') {
-                // No body required — read it only if present (for optional rejection_reason)
                 $data = getJsonBody(true);
 
-                $stmt = $db->prepare("SELECT * FROM expenses WHERE id = ?");
-                $stmt->execute([$id]);
+                // 🆕 Only fetch if it belongs to the current branch
+                $stmt = $db->prepare("SELECT * FROM expenses WHERE id = ? AND branch_id = ?");
+                $stmt->execute([$id, $BRANCH_ID]);
                 $existing = $stmt->fetch(PDO::FETCH_ASSOC);
                 if (!$existing) {
                     http_response_code(404);
-                    echo json_encode(['error' => 'Expense not found']);
+                    echo json_encode(['error' => 'Expense not found in this branch']);
                     exit();
                 }
 
@@ -230,15 +269,16 @@ switch ($method) {
                     ? ($data['rejection_reason'] ?? null)
                     : null;
 
+                // 🆕 branch-guarded UPDATE
                 $stmt = $db->prepare("
                     UPDATE expenses
                     SET status = ?,
                         approved_by = ?,
                         approved_at = ?,
                         rejection_reason = ?
-                    WHERE id = ?
+                    WHERE id = ? AND branch_id = ?
                 ");
-                $stmt->execute([$newStatus, $approved_by, $approved_at, $reason, $id]);
+                $stmt->execute([$newStatus, $approved_by, $approved_at, $reason, $id, $BRANCH_ID]);
 
                 $stmt = $db->prepare("SELECT * FROM expenses WHERE id = ?");
                 $stmt->execute([$id]);
@@ -256,10 +296,11 @@ switch ($method) {
             // -------- Generic PUT (full update) --------
             $data = getJsonBody(false);
 
-            $stmt = $db->prepare("SELECT * FROM expenses WHERE id = ?");
-            $stmt->execute([$id]);
+            // 🆕 branch-guarded lookup
+            $stmt = $db->prepare("SELECT * FROM expenses WHERE id = ? AND branch_id = ?");
+            $stmt->execute([$id, $BRANCH_ID]);
             $existing = $stmt->fetch(PDO::FETCH_ASSOC);
-            if (!$existing) { http_response_code(404); echo json_encode(['error' => 'Expense not found']); exit(); }
+            if (!$existing) { http_response_code(404); echo json_encode(['error' => 'Expense not found in this branch']); exit(); }
 
             $fields = []; $params = [];
 
@@ -292,8 +333,10 @@ switch ($method) {
 
             if (!$fields) { http_response_code(400); echo json_encode(['error' => 'No fields to update']); exit(); }
 
+            // 🆕 append branch guard to the WHERE clause
             $params[] = $id;
-            $sql = "UPDATE expenses SET " . implode(', ', $fields) . " WHERE id = ?";
+            $params[] = $BRANCH_ID;
+            $sql = "UPDATE expenses SET " . implode(', ', $fields) . " WHERE id = ? AND branch_id = ?";
             $db->prepare($sql)->execute($params);
 
             $stmt = $db->prepare("SELECT * FROM expenses WHERE id = ?");
@@ -316,9 +359,10 @@ switch ($method) {
     case 'DELETE':
         if (!$id) { http_response_code(400); echo json_encode(['error' => 'Expense ID required']); exit(); }
         try {
-            $stmt = $db->prepare("DELETE FROM expenses WHERE id = ?");
-            $stmt->execute([$id]);
-            if ($stmt->rowCount() === 0) { http_response_code(404); echo json_encode(['error' => 'Expense not found']); exit(); }
+            // 🆕 branch-guarded DELETE
+            $stmt = $db->prepare("DELETE FROM expenses WHERE id = ? AND branch_id = ?");
+            $stmt->execute([$id, $BRANCH_ID]);
+            if ($stmt->rowCount() === 0) { http_response_code(404); echo json_encode(['error' => 'Expense not found in this branch']); exit(); }
             echo json_encode(['status' => true, 'success' => true, 'message' => 'Expense deleted']);
         } catch (Exception $e) {
             http_response_code(500);

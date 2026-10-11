@@ -1,6 +1,6 @@
 <?php
 // api/transactions.php - Complete working file
-// Supports: deposits, withdrawals, transfers, payment slips, rejection reasons, deposit charges
+// Branch-aware: deposits, withdrawals, transfers, payment slips, rejection reasons, deposit charges
 
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
@@ -31,9 +31,24 @@ if (!$db) {
 
 // ============================================================
 // AUTO-MIGRATION: ensure needed columns exist
-// Safe to run on every request — only adds missing columns.
 // ============================================================
 ensureSchema($db);
+
+// ============================================================
+// BRANCH CONTEXT
+// ============================================================
+$requestedBranchId = isset($_GET['branch_id']) ? (int)$_GET['branch_id'] : 0;
+
+if ($requestedBranchId <= 0) {
+    try {
+        $row = $db->query("SELECT id FROM branches WHERE status = 'active' ORDER BY id ASC LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+        $requestedBranchId = $row ? (int)$row['id'] : 1;
+    } catch (Exception $e) {
+        $requestedBranchId = 1;
+    }
+}
+
+$BRANCH_ID = $requestedBranchId;
 
 $method = $_SERVER['REQUEST_METHOD'];
 $requestUri = $_SERVER['REQUEST_URI'];
@@ -99,6 +114,11 @@ function ensureSchema($db) {
 
         $adds = [];
 
+        // 🆕 Branch
+        if (!isset($cols['branch_id'])) {
+            $adds[] = "ADD COLUMN branch_id INT NOT NULL DEFAULT 1 AFTER id";
+        }
+
         if (!isset($cols['payment_slip'])) {
             $adds[] = "ADD COLUMN payment_slip LONGTEXT NULL";
         }
@@ -135,6 +155,11 @@ function ensureSchema($db) {
             $db->exec($sql);
             error_log("[transactions.php] Schema updated: " . $sql);
         }
+
+        // Back-fill any NULL/0 branch_id rows to branch 1
+        try {
+            $db->exec("UPDATE transactions SET branch_id = 1 WHERE branch_id IS NULL OR branch_id = 0");
+        } catch (Exception $e) { /* silent */ }
     } catch (Exception $e) {
         error_log("[transactions.php] Schema migration skipped: " . $e->getMessage());
     }
@@ -145,24 +170,17 @@ function ensureSchema($db) {
 // ============================================================
 function normalizeSlipDataUrl($slip, $type) {
     if (empty($slip)) return null;
-
-    // Strip any whitespace / newlines
     $slip = preg_replace('/\s+/', '', $slip);
-
-    // Already a full data URL
-    if (strpos($slip, 'data:') === 0) {
-        return $slip;
-    }
-
-    // Otherwise, wrap with a data URL header
+    if (strpos($slip, 'data:') === 0) return $slip;
     $mime = $type ?: 'image/jpeg';
     return 'data:' . $mime . ';base64,' . $slip;
 }
 
 // ============================================================
-// GET
+// GET — filtered by branch
 // ============================================================
 function getTransactions($db) {
+    global $BRANCH_ID;
     try {
         $tableCheck = $db->query("SHOW TABLES LIKE 'transactions'");
         if ($tableCheck->rowCount() == 0) {
@@ -170,13 +188,17 @@ function getTransactions($db) {
             return;
         }
 
-        $stmt = $db->query("SELECT * FROM transactions ORDER BY id DESC LIMIT 100");
+        $stmt = $db->prepare(
+            "SELECT * FROM transactions WHERE branch_id = ? ORDER BY id DESC LIMIT 200"
+        );
+        $stmt->execute([$BRANCH_ID]);
         $transactions = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
         $formatted = [];
         foreach ($transactions as $t) {
             $formatted[] = [
                 'id' => $t['id'],
+                'branch_id' => isset($t['branch_id']) ? (int)$t['branch_id'] : null,
                 'memberId' => $t['member_id'],
                 'memberName' => $t['member_name'] ?? 'Unknown',
                 'accountNumber' => $t['account_number'] ?? 'N/A',
@@ -189,14 +211,12 @@ function getTransactions($db) {
                 'status' => $t['status'] ?? 'pending',
                 'description' => $t['description'] ?? '',
 
-                // Transfer fields
                 'toMemberId' => $t['to_member_id'] ?? null,
                 'toMemberName' => $t['to_member_name'] ?? null,
                 'fromMemberName' => $t['from_member_name'] ?? null,
                 'fromAccountNumber' => $t['from_account_number'] ?? null,
                 'toAccountNumber' => $t['to_account_number'] ?? null,
 
-                // Payment slip fields — normalized to full data URL
                 'payment_slip' => normalizeSlipDataUrl(
                     $t['payment_slip'] ?? null,
                     $t['payment_slip_type'] ?? null
@@ -204,7 +224,6 @@ function getTransactions($db) {
                 'payment_slip_name' => $t['payment_slip_name'] ?? null,
                 'payment_slip_type' => $t['payment_slip_type'] ?? null,
 
-                // Rejection fields
                 'rejection_reason' => $t['rejection_reason'] ?? null,
                 'rejected_by' => $t['rejected_by'] ?? null,
                 'rejected_at' => $t['rejected_at'] ?? null,
@@ -222,9 +241,10 @@ function getTransactions($db) {
 }
 
 // ============================================================
-// POST — create transaction
+// POST — create transaction (forces branch)
 // ============================================================
 function createTransaction($db) {
+    global $BRANCH_ID;
     try {
         $input = file_get_contents('php://input');
         $data = json_decode($input, true);
@@ -250,12 +270,10 @@ function createTransaction($db) {
         $fromAccountNumber = $data['fromAccountNumber'] ?? $data['from_account_number'] ?? null;
         $toAccountNumber   = $data['toAccountNumber'] ?? $data['to_account_number'] ?? null;
 
-        // Payment slip
         $paymentSlip     = $data['payment_slip'] ?? null;
         $paymentSlipName = $data['payment_slip_name'] ?? null;
         $paymentSlipType = $data['payment_slip_type'] ?? null;
 
-        // ✅ Strip whitespace from base64 (newlines break rendering)
         if (!empty($paymentSlip)) {
             $paymentSlip = preg_replace('/\s+/', '', $paymentSlip);
         }
@@ -288,15 +306,18 @@ function createTransaction($db) {
             $netAmount = $amount;
         }
 
+        // 🆕 branch_id column added to INSERT
         $sql = "INSERT INTO transactions (
+            branch_id,
             member_id, member_name, account_number, type, amount, charge, rate, net_amount,
             date, status, description,
             to_member_id, to_member_name, from_member_name, from_account_number, to_account_number,
             payment_slip, payment_slip_name, payment_slip_type
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
         $stmt = $db->prepare($sql);
         $result = $stmt->execute([
+            $BRANCH_ID,
             $memberId,
             $memberName,
             $accountNumber,
@@ -326,6 +347,7 @@ function createTransaction($db) {
                 'id' => $id,
                 'transaction' => array_merge($data, [
                     'id' => $id,
+                    'branch_id' => $BRANCH_ID,
                     'charge' => $charge,
                     'rate' => $rate,
                     'net_amount' => $netAmount,
@@ -345,19 +367,24 @@ function createTransaction($db) {
 }
 
 // ============================================================
-// PUT /approve/{id}
+// PUT /approve/{id} — branch-guarded
 // ============================================================
 function approveTransaction($db, $id) {
+    global $BRANCH_ID;
     try {
         $db->beginTransaction();
 
-        $stmt = $db->prepare("SELECT * FROM transactions WHERE id = ? AND status = 'pending'");
-        $stmt->execute([$id]);
+        // Only approve a transaction that belongs to the current branch
+        $stmt = $db->prepare(
+            "SELECT * FROM transactions WHERE id = ? AND branch_id = ? AND status = 'pending'"
+        );
+        $stmt->execute([$id, $BRANCH_ID]);
         $transaction = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if (!$transaction) {
+            $db->rollBack();
             http_response_code(404);
-            echo json_encode(['error' => 'Transaction not found or already processed']);
+            echo json_encode(['error' => 'Transaction not found in this branch or already processed']);
             return;
         }
 
@@ -367,29 +394,29 @@ function approveTransaction($db, $id) {
         $netAmount  = floatval($transaction['net_amount'] ?? $amount);
         $memberId   = $transaction['member_id'];
 
-        $stmt = $db->prepare("UPDATE transactions SET status = 'approved', approved_at = NOW() WHERE id = ?");
-        $stmt->execute([$id]);
+        $stmt = $db->prepare("UPDATE transactions SET status = 'approved', approved_at = NOW() WHERE id = ? AND branch_id = ?");
+        $stmt->execute([$id, $BRANCH_ID]);
 
         $updatedBalance = 0;
         $recipientBalance = 0;
 
         if ($type === 'deposit') {
-            $stmt = $db->prepare("UPDATE members SET balance = balance + ? WHERE id = ?");
-            $stmt->execute([$netAmount, $memberId]);
+            $stmt = $db->prepare("UPDATE members SET balance = balance + ? WHERE id = ? AND branch_id = ?");
+            $stmt->execute([$netAmount, $memberId, $BRANCH_ID]);
 
-            $stmt = $db->prepare("SELECT balance FROM members WHERE id = ?");
-            $stmt->execute([$memberId]);
+            $stmt = $db->prepare("SELECT balance FROM members WHERE id = ? AND branch_id = ?");
+            $stmt->execute([$memberId, $BRANCH_ID]);
             $member = $stmt->fetch(PDO::FETCH_ASSOC);
-            $updatedBalance = $member['balance'];
+            $updatedBalance = $member['balance'] ?? 0;
 
         } elseif ($type === 'withdrawal') {
-            $stmt = $db->prepare("UPDATE members SET balance = balance - ? WHERE id = ?");
-            $stmt->execute([$amount, $memberId]);
+            $stmt = $db->prepare("UPDATE members SET balance = balance - ? WHERE id = ? AND branch_id = ?");
+            $stmt->execute([$amount, $memberId, $BRANCH_ID]);
 
-            $stmt = $db->prepare("SELECT balance FROM members WHERE id = ?");
-            $stmt->execute([$memberId]);
+            $stmt = $db->prepare("SELECT balance FROM members WHERE id = ? AND branch_id = ?");
+            $stmt->execute([$memberId, $BRANCH_ID]);
             $member = $stmt->fetch(PDO::FETCH_ASSOC);
-            $updatedBalance = $member['balance'];
+            $updatedBalance = $member['balance'] ?? 0;
 
         } elseif ($type === 'transfer') {
             $toMemberId   = $transaction['to_member_id'] ?? null;
@@ -397,33 +424,33 @@ function approveTransaction($db, $id) {
             $recipientId  = null;
 
             if ($toMemberId) {
-                $stmt = $db->prepare("SELECT id FROM members WHERE id = ?");
-                $stmt->execute([$toMemberId]);
+                $stmt = $db->prepare("SELECT id FROM members WHERE id = ? AND branch_id = ?");
+                $stmt->execute([$toMemberId, $BRANCH_ID]);
                 $recipient = $stmt->fetch();
                 if ($recipient) $recipientId = $recipient['id'];
             } elseif ($toMemberName) {
-                $stmt = $db->prepare("SELECT id FROM members WHERE name LIKE ?");
-                $stmt->execute(["%$toMemberName%"]);
+                $stmt = $db->prepare("SELECT id FROM members WHERE name LIKE ? AND branch_id = ?");
+                $stmt->execute(["%$toMemberName%", $BRANCH_ID]);
                 $recipient = $stmt->fetch();
                 if ($recipient) $recipientId = $recipient['id'];
             }
 
             if ($recipientId) {
-                $stmt = $db->prepare("UPDATE members SET balance = balance - ? WHERE id = ?");
-                $stmt->execute([$amount, $memberId]);
+                $stmt = $db->prepare("UPDATE members SET balance = balance - ? WHERE id = ? AND branch_id = ?");
+                $stmt->execute([$amount, $memberId, $BRANCH_ID]);
 
-                $stmt = $db->prepare("UPDATE members SET balance = balance + ? WHERE id = ?");
-                $stmt->execute([$amount, $recipientId]);
+                $stmt = $db->prepare("UPDATE members SET balance = balance + ? WHERE id = ? AND branch_id = ?");
+                $stmt->execute([$amount, $recipientId, $BRANCH_ID]);
 
-                $stmt = $db->prepare("SELECT balance FROM members WHERE id = ?");
-                $stmt->execute([$memberId]);
+                $stmt = $db->prepare("SELECT balance FROM members WHERE id = ? AND branch_id = ?");
+                $stmt->execute([$memberId, $BRANCH_ID]);
                 $member = $stmt->fetch(PDO::FETCH_ASSOC);
-                $updatedBalance = $member['balance'];
+                $updatedBalance = $member['balance'] ?? 0;
 
-                $stmt = $db->prepare("SELECT balance FROM members WHERE id = ?");
-                $stmt->execute([$recipientId]);
+                $stmt = $db->prepare("SELECT balance FROM members WHERE id = ? AND branch_id = ?");
+                $stmt->execute([$recipientId, $BRANCH_ID]);
                 $rm = $stmt->fetch(PDO::FETCH_ASSOC);
-                $recipientBalance = $rm['balance'];
+                $recipientBalance = $rm['balance'] ?? 0;
             }
         }
 
@@ -438,18 +465,17 @@ function approveTransaction($db, $id) {
             'recipient_balance' => $recipientBalance
         ]);
     } catch (Exception $e) {
-        $db->rollBack();
+        if ($db->inTransaction()) $db->rollBack();
         http_response_code(500);
         echo json_encode(['error' => 'Failed to approve transaction: ' . $e->getMessage()]);
     }
 }
 
 // ============================================================
-// PUT /reject/{id}
-// Accepts body: { "reason": "...", "rejected_by": "Admin Name" }
-// Also accepts "rejection_reason" as alias.
+// PUT /reject/{id} — branch-guarded
 // ============================================================
 function rejectTransaction($db, $id) {
+    global $BRANCH_ID;
     try {
         $input = file_get_contents('php://input');
         $data = json_decode($input, true) ?: [];
@@ -466,13 +492,15 @@ function rejectTransaction($db, $id) {
                    ?? $data['approved_by']
                    ?? 'Admin';
 
-        $stmt = $db->prepare("SELECT * FROM transactions WHERE id = ? AND status = 'pending'");
-        $stmt->execute([$id]);
+        $stmt = $db->prepare(
+            "SELECT * FROM transactions WHERE id = ? AND branch_id = ? AND status = 'pending'"
+        );
+        $stmt->execute([$id, $BRANCH_ID]);
         $transaction = $stmt->fetch(PDO::FETCH_ASSOC);
 
         if (!$transaction) {
             http_response_code(404);
-            echo json_encode(['error' => 'Transaction not found or already processed']);
+            echo json_encode(['error' => 'Transaction not found in this branch or already processed']);
             return;
         }
 
@@ -482,9 +510,9 @@ function rejectTransaction($db, $id) {
                  rejection_reason = ?,
                  rejected_by = ?,
                  rejected_at = NOW()
-             WHERE id = ?"
+             WHERE id = ? AND branch_id = ?"
         );
-        $stmt->execute([$reason, $rejectedBy, $id]);
+        $stmt->execute([$reason, $rejectedBy, $id, $BRANCH_ID]);
 
         echo json_encode([
             'success' => true,
