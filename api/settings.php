@@ -20,14 +20,11 @@ $allowedList = [
     'http://127.0.0.1:5173',
     'http://localhost:5174',
     'http://127.0.0.1:5174',
-    // add your production origin here
 ];
-
 if (in_array($allowedOrigin, $allowedList, true)) {
     header("Access-Control-Allow-Origin: $allowedOrigin");
     header("Access-Control-Allow-Credentials: true");
 } else if (empty($_COOKIE)) {
-    // Safe fallback for anonymous requests: no credentials involved.
     header("Access-Control-Allow-Origin: *");
 }
 header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS");
@@ -38,16 +35,6 @@ header("Pragma: no-cache");
 header("Expires: 0");
 header("Content-Type: application/json; charset=UTF-8");
 
-// Optional: uncomment to log every request while debugging.
-// file_put_contents(
-//     __DIR__ . '/cors_debug.log',
-//     date('c') . ' ' . ($_SERVER['REQUEST_METHOD'] ?? '?') . ' ' .
-//     ($_SERVER['REQUEST_URI'] ?? '?') . ' origin=' .
-//     ($_SERVER['HTTP_ORIGIN'] ?? '(none)') . "\n",
-//     FILE_APPEND
-// );
-
-// Answer preflight immediately, before touching the DB or body.
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
     exit();
@@ -64,10 +51,6 @@ try {
     exit();
 }
 
-// ============================================================
-// Resolve which branch this request is for.
-// Priority: ?branch_id= query → first active branch → 1
-// ============================================================
 $requestedBranchId = isset($_GET['branch_id']) ? (int)$_GET['branch_id'] : 0;
 
 if ($requestedBranchId <= 0) {
@@ -84,6 +67,7 @@ if ($requestedBranchId <= 0) {
 $BRANCH_ID = $requestedBranchId;
 $method = $_SERVER['REQUEST_METHOD'];
 
+// 🆕 'items' added here
 $ALLOWED_KEYS = [
     'general',
     'contribution',
@@ -94,14 +78,14 @@ $ALLOWED_KEYS = [
     'suspension',
     'loan',
     'charges',
+    'items',
 ];
 
 // ============================================================
-// GET — return every setting for this branch.
+// GET
 // ============================================================
 if ($method === 'GET') {
     try {
-        // Single-key fetch
         if (isset($_GET['key']) && $_GET['key'] !== '') {
             $key = $_GET['key'];
             $stmt = $db->prepare("SELECT * FROM settings WHERE setting_key = ? AND branch_id = ? LIMIT 1");
@@ -123,7 +107,6 @@ if ($method === 'GET') {
             exit();
         }
 
-        // Full fetch for this branch
         $stmt = $db->prepare("SELECT * FROM settings WHERE branch_id = ?");
         $stmt->execute([$BRANCH_ID]);
         $settings = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -133,7 +116,7 @@ if ($method === 'GET') {
             $result[$setting['setting_key']] = json_decode($setting['setting_value'], true);
         }
 
-        // ---- 'general' fallback from the branch's own record ----
+        // general fallback from branch record
         if (!isset($result['general'])) {
             $template = [
                 'shop_name'    => '',
@@ -144,7 +127,6 @@ if ($method === 'GET') {
                 'timezone'     => 'Africa/Lagos',
                 'date_format'  => 'DD/MM/YYYY',
             ];
-
             try {
                 $b = $db->prepare("SELECT name, email, phone, address FROM branches WHERE id = ? LIMIT 1");
                 $b->execute([$BRANCH_ID]);
@@ -158,11 +140,10 @@ if ($method === 'GET') {
             } catch (Exception $e) {
                 error_log("settings.php branch template error: " . $e->getMessage());
             }
-
             $result['general'] = $template;
         }
 
-        // ---- ensure 'loan' exists ----
+        // loan fallback
         if (!isset($result['loan'])) {
             $result['loan'] = [
                 'min_membership_days'      => 180,
@@ -187,7 +168,7 @@ if ($method === 'GET') {
             $ins->execute([$json, $BRANCH_ID]);
         }
 
-        // ---- ensure 'charges' exists ----
+        // charges fallback
         if (!isset($result['charges'])) {
             $result['charges'] = [
                 'enabled'              => true,
@@ -199,6 +180,24 @@ if ($method === 'GET') {
             $ins = $db->prepare("
                 INSERT INTO settings (setting_key, setting_value, branch_id)
                 VALUES ('charges', ?, ?)
+                ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)
+            ");
+            $ins->execute([$json, $BRANCH_ID]);
+        }
+
+        // 🆕 items fallback — sensible defaults so MemberProfile never sees empty
+        if (!isset($result['items'])) {
+            $result['items'] = [
+                'durations'              => ['6 months', '1 year'],
+                'savings_plans'          => ['Daily', 'Weekly', 'Monthly', 'Random'],
+                'allow_multi_item'       => true,
+                'money_check_mode'       => 'strict',
+                'require_duration_match' => true,
+            ];
+            $json = json_encode($result['items']);
+            $ins = $db->prepare("
+                INSERT INTO settings (setting_key, setting_value, branch_id)
+                VALUES ('items', ?, ?)
                 ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)
             ");
             $ins->execute([$json, $BRANCH_ID]);
@@ -218,7 +217,7 @@ if ($method === 'GET') {
 }
 
 // ============================================================
-// POST — save every section the client sent.
+// POST — save every section the client sent
 // ============================================================
 if ($method === 'POST') {
     try {
@@ -231,8 +230,6 @@ if ($method === 'POST') {
             exit();
         }
 
-        // branch_id may arrive in the body — read it, then strip it
-        // so it's never treated as a setting section.
         if (
             isset($data['branch_id']) &&
             (int)$data['branch_id'] > 0 &&
@@ -289,7 +286,7 @@ if ($method === 'POST') {
 }
 
 // ============================================================
-// PUT — update one section.
+// PUT — update one section
 // ============================================================
 if ($method === 'PUT') {
     try {
@@ -334,7 +331,7 @@ if ($method === 'PUT') {
 }
 
 // ============================================================
-// DELETE — remove one section for a branch.
+// DELETE — remove one section for a branch
 // ============================================================
 if ($method === 'DELETE') {
     try {

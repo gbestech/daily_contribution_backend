@@ -9,7 +9,16 @@ while (ob_get_level()) {
     ob_end_clean();
 }
 
-header("Access-Control-Allow-Origin: *");
+// ============================================================
+// CORS — echo origin (fixes "* + credentials" conflict)
+// ============================================================
+$__origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+if ($__origin !== '') {
+    header("Access-Control-Allow-Origin: $__origin");
+    header("Vary: Origin");
+} else {
+    header("Access-Control-Allow-Origin: *");
+}
 header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With, Accept");
 header("Access-Control-Allow-Credentials: true");
@@ -66,7 +75,6 @@ try {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     ");
 
-    // 🆕 Ensure branch_id exists on older installs
     try {
         $db->exec("ALTER TABLE items ADD COLUMN branch_id INT NOT NULL DEFAULT 1");
     } catch (Exception $e) { /* column already exists */ }
@@ -74,7 +82,7 @@ try {
     // Tables probably already exist — safe to ignore
 }
 
-// 🆕 BRANCH CONTEXT — read from query string, fall back to first active branch
+// ===== BRANCH CONTEXT =====
 $requestedBranchId = isset($_GET['branch_id']) ? (int)$_GET['branch_id'] : 0;
 
 if ($requestedBranchId <= 0) {
@@ -176,7 +184,6 @@ try {
                 exit();
             }
 
-            // 🆕 Confirm the item exists in this branch before updating
             $check = $db->prepare("SELECT id FROM items WHERE id = ? AND branch_id = ?");
             $check->execute([$id, $BRANCH_ID]);
             if (!$check->fetch(PDO::FETCH_ASSOC)) {
@@ -221,7 +228,6 @@ try {
                 exit();
             }
 
-            // 🆕 Confirm the item exists in this branch before deleting
             $check = $db->prepare("SELECT id FROM items WHERE id = ? AND branch_id = ?");
             $check->execute([$id, $BRANCH_ID]);
             if (!$check->fetch(PDO::FETCH_ASSOC)) {
