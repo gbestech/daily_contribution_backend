@@ -740,3 +740,9 @@ Stack trace:
 [10-Oct-2026 14:59:57 Europe/Berlin] settings GET error: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'key' in 'field list'
 [10-Oct-2026 14:59:57 Europe/Berlin] settings GET error: SQLSTATE[42S22]: Column not found: 1054 Unknown column 'key' in 'field list'
 [11-Oct-2026 10:02:51 Europe/Berlin] Database connection failed: SQLSTATE[HY000] [2006] MySQL server has gone away
+[17-Oct-2026 07:23:58 Europe/Berlin] settings.php insertSettingIfMissing(loan) failed: SQLSTATE[23000]: Integrity constraint violation: 1062 Duplicate entry 'loan' for key 'setting_key'
+[17-Oct-2026 07:23:58 Europe/Berlin] settings.php insertSettingIfMissing(charges) failed: SQLSTATE[23000]: Integrity constraint violation: 1062 Duplicate entry 'charges' for key 'setting_key'
+[17-Oct-2026 07:24:07 Europe/Berlin] settings.php insertSettingIfMissing(loan) failed: SQLSTATE[23000]: Integrity constraint violation: 1062 Duplicate entry 'loan' for key 'setting_key'
+[17-Oct-2026 07:24:07 Europe/Berlin] settings.php insertSettingIfMissing(charges) failed: SQLSTATE[23000]: Integrity constraint violation: 1062 Duplicate entry 'charges' for key 'setting_key'
+[17-Oct-2026 07:24:17 Europe/Berlin] settings.php insertSettingIfMissing(loan) failed: SQLSTATE[23000]: Integrity constraint violation: 1062 Duplicate entry 'loan' for key 'setting_key'
+[17-Oct-2026 07:24:17 Europe/Berlin] settings.php insertSettingIfMissing(charges) failed: SQLSTATE[23000]: Integrity constraint violation: 1062 Duplicate entry 'charges' for key 'setting_key'
