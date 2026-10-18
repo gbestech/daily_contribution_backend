@@ -1320,3 +1320,4 @@ Stack trace:
 [17-Oct-2026 10:59:47 Europe/Berlin] settings.php insertSettingIfMissing(items) failed: SQLSTATE[23000]: Integrity constraint violation: 1062 Duplicate entry 'items' for key 'setting_key'
 [17-Oct-2026 10:59:52 Europe/Berlin] settings.php POST PDO error: SQLSTATE[23000]: Integrity constraint violation: 1062 Duplicate entry 'items' for key 'setting_key'
 [17-Oct-2026 13:41:03 Europe/Berlin] [transactions.php] Back-filled branch_id on transactions
+[18-Oct-2026 07:06:44 Europe/Berlin] Database connection failed: SQLSTATE[HY000] [2006] MySQL server has gone away
