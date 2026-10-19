@@ -5,249 +5,218 @@ ini_set('display_errors', 0);
 ini_set('log_errors', 1);
 ini_set('error_log', __DIR__ . '/error.log');
 
-while (ob_get_level()) {
-    ob_end_clean();
-}
+while (ob_get_level()) { ob_end_clean(); }
 
-// ============================================================
-// CORS — echo origin (fixes "* + credentials" conflict)
-// ============================================================
-$__origin = $_SERVER['HTTP_ORIGIN'] ?? '';
-if ($__origin !== '') {
-    header("Access-Control-Allow-Origin: $__origin");
-    header("Vary: Origin");
-} else {
-    header("Access-Control-Allow-Origin: *");
-}
+header("Access-Control-Allow-Origin: *");
 header("Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type, Authorization, X-Requested-With, Accept");
 header("Access-Control-Allow-Credentials: true");
 header("Access-Control-Max-Age: 86400");
 
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    http_response_code(200);
-    exit();
-}
-
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') { http_response_code(200); exit(); }
 header("Content-Type: application/json; charset=UTF-8");
 
 require_once __DIR__ . '/config/database.php';
 
-try {
-    $db = getDBConnection();
-} catch (Exception $e) {
+try { $db = getDBConnection(); }
+catch (Exception $e) {
     http_response_code(500);
-    echo json_encode(['error' => 'Database connection failed']);
+    echo json_encode(['error' => 'DB connection failed: ' . $e->getMessage()]);
     exit();
 }
-
 if (!$db) {
     http_response_code(500);
     echo json_encode(['error' => 'Database connection failed']);
     exit();
 }
 
-// ===== AUTO-CREATE TABLES =====
-try {
-    $db->exec("
-        CREATE TABLE IF NOT EXISTS items (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            branch_id INT NOT NULL DEFAULT 1,
-            name VARCHAR(150) NOT NULL,
-            description VARCHAR(255) DEFAULT NULL,
-            value DECIMAL(12,2) DEFAULT 0.00,
-            active TINYINT(1) DEFAULT 1,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            INDEX idx_branch_id (branch_id)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    ");
-
-    $db->exec("
-        CREATE TABLE IF NOT EXISTS member_items (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            member_id INT NOT NULL,
-            item_id INT NOT NULL,
-            checked TINYINT(1) DEFAULT 1,
-            checked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE KEY uniq_member_item (member_id, item_id),
-            INDEX (member_id),
-            INDEX (item_id)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    ");
-
-    try {
-        $db->exec("ALTER TABLE items ADD COLUMN branch_id INT NOT NULL DEFAULT 1");
-    } catch (Exception $e) { /* column already exists */ }
-} catch (Exception $e) {
-    // Tables probably already exist — safe to ignore
-}
-
-// ===== BRANCH CONTEXT =====
-$requestedBranchId = isset($_GET['branch_id']) ? (int)$_GET['branch_id'] : 0;
-
-if ($requestedBranchId <= 0) {
-    try {
-        $row = $db->query("SELECT id FROM branches WHERE status = 'active' ORDER BY id ASC LIMIT 1")
-                  ->fetch(PDO::FETCH_ASSOC);
-        $requestedBranchId = $row ? (int)$row['id'] : 1;
-    } catch (Exception $e) {
-        $requestedBranchId = 1;
-    }
-}
-$BRANCH_ID = $requestedBranchId;
-
 $method = $_SERVER['REQUEST_METHOD'];
-$requestUri = $_SERVER['REQUEST_URI'];
-$path = parse_url($requestUri, PHP_URL_PATH);
+$input  = json_decode(file_get_contents('php://input'), true) ?: [];
 
-// Extract numeric id from URL: /api/items.php/123  OR  ?id=123
-$id = null;
-if (isset($_GET['id']) && is_numeric($_GET['id'])) {
-    $id = (int)$_GET['id'];
-} else {
-    $pathParts = explode('/', $path);
-    foreach ($pathParts as $part) {
-        if (is_numeric($part)) {
-            $id = (int)$part;
-            break;
-        }
-    }
+// Path-based id: /api/items.php/12
+$path     = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+$segments = explode('/', trim($path, '/'));
+$idFromPath = null;
+if (count($segments) >= 3 && ctype_digit(end($segments))) {
+    $idFromPath = (int) end($segments);
 }
 
-$input = json_decode(file_get_contents('php://input'), true) ?: [];
+// Branch from query (React sends ?branch_id=)
+$branchId = isset($_GET['branch_id']) ? (int) $_GET['branch_id'] : 0;
 
 try {
     switch ($method) {
-
-        // ============ GET ============
+        // ------------------------------------------------------------
+        // GET: admin list (branch-scoped) OR member list (?member_id=)
+        // ------------------------------------------------------------
         case 'GET':
-            $memberId = isset($_GET['member_id']) ? (int)$_GET['member_id'] : null;
+            // ---------- MEMBER MODE ----------
+            if (!empty($_GET['member_id'])) {
+                $memberId = (int) $_GET['member_id'];
 
-            if ($memberId) {
+                // Resolve member's branch (fallback to query branch_id)
+                $mStmt = $db->prepare("SELECT branch_id FROM members WHERE id = ?");
+                $mStmt->execute([$memberId]);
+                $member = $mStmt->fetch(PDO::FETCH_ASSOC);
+                if (!$member) {
+                    http_response_code(404);
+                    echo json_encode(['error' => 'Member not found']);
+                    exit();
+                }
+                $memberBranchId = (int)($member['branch_id'] ?? 0) ?: $branchId;
+
+                // Only visible items in the member's branch, plus checked flag
                 $stmt = $db->prepare("
-                    SELECT i.*,
+                    SELECT i.id, i.name, i.description, i.value, i.active,
                            COALESCE(mi.checked, 0) AS checked,
                            mi.checked_at
                     FROM items i
                     LEFT JOIN member_items mi
-                        ON mi.item_id = i.id AND mi.member_id = ?
-                    WHERE i.active = 1 AND i.branch_id = ?
+                           ON mi.item_id = i.id AND mi.member_id = :member_id
+                    WHERE i.active = 1
+                      AND (:branch_id = 0 OR i.branch_id = :branch_id)
                     ORDER BY i.name ASC
                 ");
-                $stmt->execute([$memberId, $BRANCH_ID]);
-                echo json_encode([
-                    'items' => $stmt->fetchAll(PDO::FETCH_ASSOC),
-                    'branch_id' => $BRANCH_ID,
-                ]);
-            } else {
-                $stmt = $db->prepare("SELECT * FROM items WHERE branch_id = ? ORDER BY name ASC");
-                $stmt->execute([$BRANCH_ID]);
-                echo json_encode([
-                    'items' => $stmt->fetchAll(PDO::FETCH_ASSOC),
-                    'branch_id' => $BRANCH_ID,
-                ]);
-            }
-            break;
+                $stmt->bindValue(':member_id', $memberId, PDO::PARAM_INT);
+                $stmt->bindValue(':branch_id', $memberBranchId, PDO::PARAM_INT);
+                $stmt->execute();
 
-        // ============ POST ============
+                echo json_encode(['items' => $stmt->fetchAll(PDO::FETCH_ASSOC)]);
+                exit();
+            }
+
+            // ---------- ADMIN MODE ----------
+            $stmt = $db->prepare("
+                SELECT id, name, description, value, active, branch_id, created_at
+                FROM items
+                WHERE (:branch_id = 0 OR branch_id = :branch_id)
+                ORDER BY name ASC
+            ");
+            $stmt->bindValue(':branch_id', $branchId, PDO::PARAM_INT);
+            $stmt->execute();
+            echo json_encode(['items' => $stmt->fetchAll(PDO::FETCH_ASSOC)]);
+            exit();
+
+        // ------------------------------------------------------------
+        // POST: create item (admin)
+        // ------------------------------------------------------------
         case 'POST':
-            if (empty($input['name'])) {
+            $name = trim($input['name'] ?? '');
+            if ($name === '') {
+                http_response_code(400);
+                echo json_encode(['error' => 'Item name is required']);
+                exit();
+            }
+            $description = trim($input['description'] ?? '');
+            $value       = (float)($input['value'] ?? 0);
+            $active      = isset($input['active']) ? (int)$input['active'] : 1;
+            $createBranch = $branchId ?: (int)($input['branch_id'] ?? 0);
+
+            if (!$createBranch) {
+                http_response_code(400);
+                echo json_encode(['error' => 'branch_id required']);
+                exit();
+            }
+
+            $stmt = $db->prepare("
+                INSERT INTO items (name, description, value, active, branch_id)
+                VALUES (?, ?, ?, ?, ?)
+            ");
+            $stmt->execute([$name, $description, $value, $active, $createBranch]);
+            echo json_encode(['success' => true, 'id' => (int)$db->lastInsertId()]);
+            exit();
+
+        // ------------------------------------------------------------
+        // PUT: update item (admin) or toggle active
+        // ------------------------------------------------------------
+        case 'PUT':
+            $id = $idFromPath ?: (int)($input['id'] ?? 0);
+            if (!$id) {
+                http_response_code(400);
+                echo json_encode(['error' => 'Item id required']);
+                exit();
+            }
+
+            // Partial update — toggle active
+            if (array_key_exists('active', $input) && count($input) === 1) {
+                $stmt = $db->prepare("
+                    UPDATE items SET active = ?
+                    WHERE id = ? AND (:branch_id = 0 OR branch_id = :branch_id)
+                ");
+                $stmt->execute([(int)$input['active'], $id, ':branch_id' => 0]);
+                // Rewrite with named branch properly (PDO quirk):
+                $stmt = $db->prepare("
+                    UPDATE items SET active = :active
+                    WHERE id = :id AND (:branch_id = 0 OR branch_id = :branch_id2)
+                ");
+                $stmt->execute([
+                    ':active'      => (int)$input['active'],
+                    ':id'          => $id,
+                    ':branch_id'   => $branchId,
+                    ':branch_id2'  => $branchId,
+                ]);
+                echo json_encode(['success' => true]);
+                exit();
+            }
+
+            // Full update
+            $name = trim($input['name'] ?? '');
+            if ($name === '') {
                 http_response_code(400);
                 echo json_encode(['error' => 'Item name is required']);
                 exit();
             }
             $stmt = $db->prepare("
-                INSERT INTO items (name, description, value, active, branch_id)
-                VALUES (?, ?, ?, 1, ?)
+                UPDATE items
+                SET name = :name, description = :desc, value = :val
+                WHERE id = :id AND (:branch_id = 0 OR branch_id = :branch_id2)
             ");
             $stmt->execute([
-                trim($input['name']),
-                trim($input['description'] ?? ''),
-                floatval($input['value'] ?? 0),
-                $BRANCH_ID,
+                ':name'       => $name,
+                ':desc'       => trim($input['description'] ?? ''),
+                ':val'        => (float)($input['value'] ?? 0),
+                ':id'         => $id,
+                ':branch_id'  => $branchId,
+                ':branch_id2' => $branchId,
             ]);
-            $newId = $db->lastInsertId();
-
-            $row = $db->prepare("SELECT * FROM items WHERE id = ? AND branch_id = ?");
-            $row->execute([$newId, $BRANCH_ID]);
-            echo json_encode([
-                'success' => true,
-                'item' => $row->fetch(PDO::FETCH_ASSOC)
-            ]);
-            break;
-
-        // ============ PUT ============
-        case 'PUT':
-            if (!$id) {
-                http_response_code(400);
-                echo json_encode(['error' => 'Item id is required']);
-                exit();
-            }
-
-            $check = $db->prepare("SELECT id FROM items WHERE id = ? AND branch_id = ?");
-            $check->execute([$id, $BRANCH_ID]);
-            if (!$check->fetch(PDO::FETCH_ASSOC)) {
-                http_response_code(404);
-                echo json_encode(['error' => 'Item not found in this branch']);
-                exit();
-            }
-
-            $fields = [];
-            $params = [];
-            foreach (['name', 'description', 'value', 'active'] as $f) {
-                if (array_key_exists($f, $input)) {
-                    $fields[] = "$f = ?";
-                    $params[] = $input[$f];
-                }
-            }
-            if (!$fields) {
-                http_response_code(400);
-                echo json_encode(['error' => 'Nothing to update']);
-                exit();
-            }
-            $params[] = $id;
-            $params[] = $BRANCH_ID;
-            $stmt = $db->prepare(
-                "UPDATE items SET " . implode(", ", $fields) . " WHERE id = ? AND branch_id = ?"
-            );
-            $stmt->execute($params);
-
-            $row = $db->prepare("SELECT * FROM items WHERE id = ? AND branch_id = ?");
-            $row->execute([$id, $BRANCH_ID]);
-            echo json_encode([
-                'success' => true,
-                'item' => $row->fetch(PDO::FETCH_ASSOC)
-            ]);
-            break;
-
-        // ============ DELETE ============
-        case 'DELETE':
-            if (!$id) {
-                http_response_code(400);
-                echo json_encode(['error' => 'Item id is required']);
-                exit();
-            }
-
-            $check = $db->prepare("SELECT id FROM items WHERE id = ? AND branch_id = ?");
-            $check->execute([$id, $BRANCH_ID]);
-            if (!$check->fetch(PDO::FETCH_ASSOC)) {
-                http_response_code(404);
-                echo json_encode(['error' => 'Item not found in this branch']);
-                exit();
-            }
-
-            $db->prepare("DELETE FROM member_items WHERE item_id = ?")->execute([$id]);
-            $db->prepare("DELETE FROM items WHERE id = ? AND branch_id = ?")
-               ->execute([$id, $BRANCH_ID]);
             echo json_encode(['success' => true]);
-            break;
+            exit();
+
+        // ------------------------------------------------------------
+        // DELETE: remove item + its member links
+        // ------------------------------------------------------------
+        case 'DELETE':
+            $id = $idFromPath ?: (int)($input['id'] ?? 0);
+            if (!$id) {
+                http_response_code(400);
+                echo json_encode(['error' => 'Item id required']);
+                exit();
+            }
+            $db->beginTransaction();
+            try {
+                $db->prepare("DELETE FROM member_items WHERE item_id = ?")->execute([$id]);
+                $stmt = $db->prepare("
+                    DELETE FROM items
+                    WHERE id = :id AND (:branch_id = 0 OR branch_id = :branch_id2)
+                ");
+                $stmt->execute([
+                    ':id'         => $id,
+                    ':branch_id'  => $branchId,
+                    ':branch_id2' => $branchId,
+                ]);
+                $db->commit();
+                echo json_encode(['success' => true]);
+            } catch (Exception $e) {
+                $db->rollBack();
+                throw $e;
+            }
+            exit();
 
         default:
             http_response_code(405);
             echo json_encode(['error' => 'Method not allowed']);
     }
 } catch (Exception $e) {
-    error_log("items.php error: " . $e->getMessage());
     http_response_code(500);
-    echo json_encode(['error' => 'Request failed']);
+    echo json_encode(['error' => $e->getMessage()]);
 }
