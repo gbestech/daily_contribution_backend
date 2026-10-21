@@ -9,10 +9,21 @@ function getDBConnection() {
         $password = getenv('DB_PASS')     ?: '';
         $port     = getenv('DB_PORT')     ?: '3306';
 
+        // SSL options for Aiven MySQL (safe to include locally — 
+        // skipped if ca.pem doesn't exist)
+        $sslOptions = [];
+        if (file_exists(__DIR__ . '/ca.pem')) {
+            $sslOptions = [
+                PDO::MYSQL_ATTR_SSL_CA => __DIR__ . '/ca.pem',
+                PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT => true,
+            ];
+        }
+
         $pdo = new PDO(
             "mysql:host=$host;port=$port;dbname=$dbname;charset=utf8mb4",
             $username,
-            $password
+            $password,
+            $sslOptions
         );
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
         $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
