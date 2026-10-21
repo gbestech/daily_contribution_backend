@@ -2,16 +2,21 @@
 // api/config/database.php
 function getDBConnection() {
     try {
-        // MySQL configuration
-        $host = 'localhost';
-        $dbname = 'baleeg_db';
-        $username = 'root';
-        $password = '';
-        
-        $pdo = new PDO("mysql:host=$host;dbname=$dbname;charset=utf8mb4", $username, $password);
+        // Read from environment variables (Render) with XAMPP fallbacks
+        $host     = getenv('DB_HOST')     ?: 'localhost';
+        $dbname   = getenv('DB_NAME')     ?: 'baleeg_db';
+        $username = getenv('DB_USER')     ?: 'root';
+        $password = getenv('DB_PASS')     ?: '';
+        $port     = getenv('DB_PORT')     ?: '3306';
+
+        $pdo = new PDO(
+            "mysql:host=$host;port=$port;dbname=$dbname;charset=utf8mb4",
+            $username,
+            $password
+        );
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
         $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
-        
+
         return $pdo;
     } catch (PDOException $e) {
         error_log("Database connection failed: " . $e->getMessage());
@@ -22,7 +27,7 @@ function getDBConnection() {
 // Create tables if they don't exist
 function initializeDatabase($db) {
     if (!$db) return;
-    
+
     try {
         // Create members table
         $db->exec("
@@ -39,7 +44,7 @@ function initializeDatabase($db) {
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ");
-        
+
         // Create transactions table
         $db->exec("
             CREATE TABLE IF NOT EXISTS transactions (
@@ -56,7 +61,7 @@ function initializeDatabase($db) {
                 FOREIGN KEY (memberId) REFERENCES members(id) ON DELETE CASCADE
             )
         ");
-        
+
         // Create admins table
         $db->exec("
             CREATE TABLE IF NOT EXISTS admins (
@@ -68,7 +73,7 @@ function initializeDatabase($db) {
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ");
-        
+
         // Insert default admin if not exists
         $stmt = $db->prepare("SELECT COUNT(*) FROM admins WHERE username = 'admin'");
         $stmt->execute();
@@ -77,7 +82,7 @@ function initializeDatabase($db) {
             $stmt = $db->prepare("INSERT INTO admins (username, email, password, role) VALUES (?, ?, ?, ?)");
             $stmt->execute(['admin', 'admin@baleeg.com', $hashedPassword, 'administrator']);
         }
-        
+
     } catch (PDOException $e) {
         error_log("Failed to initialize database: " . $e->getMessage());
     }
