@@ -1,0 +1,12 @@
+ca.pem
+*.pem
+.env
+api/config/
+*.log
+api/uploads/
+.DS_Store
+Thumbs.dbapi/config/
+*.log
+api/uploads/
+.DS_Store
+Thumbs.db
