@@ -1,17 +1,16 @@
-FROM richarvey/nginx-php-fpm:latest
+FROM php:8.2-apache
 
-COPY . /var/www/html
+# Install MySQL extensions (for connecting to Aiven MySQL)
+RUN docker-php-ext-install pdo pdo_mysql mysqli
 
-ENV SKIP_COMPOSER 1
-ENV WEBROOT /var/www/html
-ENV PHP_ERRORS_STDERR 1
-ENV RUN_SCRIPTS 1
-ENV REAL_IP_HEADER 1
+# Enable Apache rewrite module (needed if your project uses .htaccess / pretty URLs)
+RUN a2enmod rewrite
 
-ENV APP_ENV production
-ENV APP_DEBUG false
-ENV LOG_CHANNEL stderr
+# Copy your project files into Apache's web root
+COPY . /var/www/html/
 
-ENV COMPOSER_ALLOW_SUPERUSER 1
+# Fix permissions so Apache (www-data) can read/execute files
+RUN chown -R www-data:www-data /var/www/html
 
-CMD ["/start.sh"]
+# Start Apache in the foreground (this is what Render expects)
+CMD ["apache2-foreground"]
