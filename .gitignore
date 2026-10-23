@@ -1,8 +1,6 @@
-ca.pem
-*.pem
 .env
-api/config/
 *.log
 api/uploads/
 .DS_Store
 Thumbs.db
+api/config/database.php.bak
