@@ -1,7 +1,7 @@
 <?php
 // api/members.php
 error_reporting(E_ALL);
-ini_set('display_errors', 0);
+ini_set('display_errors', 1);
 ini_set('log_errors', 1);
 ini_set('error_log', __DIR__ . '/error.log');
 
@@ -47,7 +47,6 @@ $reqRole = strtolower(trim($_SERVER['HTTP_X_USER_ROLE'] ?? ''));
 $isAdmin = in_array($reqRole, ['admin', 'administrator'], true);
 $isManager = in_array($reqRole, ['manager', 'branch_manager'], true);
 
-// ?all=1 is only allowed for admins. Managers must not see other branches.
 $FETCH_ALL = isset($_GET['all']) && $_GET['all'] === '1';
 if ($FETCH_ALL && !$isAdmin) {
     http_response_code(403);
@@ -60,12 +59,10 @@ if ($FETCH_ALL && !$isAdmin) {
 // ============================================================
 $requestedBranchId = 0;
 
-// 1) Query string
 if (isset($_GET['branch_id']) && (int)$_GET['branch_id'] > 0) {
     $requestedBranchId = (int)$_GET['branch_id'];
 }
 
-// 2) JSON body
 if ($requestedBranchId <= 0 && in_array($method, ['POST', 'PUT', 'PATCH'], true)) {
     $rawBody = file_get_contents('php://input');
     $bodyData = json_decode($rawBody, true);
@@ -74,14 +71,11 @@ if ($requestedBranchId <= 0 && in_array($method, ['POST', 'PUT', 'PATCH'], true)
     }
 }
 
-// 3) X-User-Branch-Id header
 if ($requestedBranchId <= 0 && !empty($_SERVER['HTTP_X_USER_BRANCH_ID'])) {
     $hdr = (int)$_SERVER['HTTP_X_USER_BRANCH_ID'];
     if ($hdr > 0) $requestedBranchId = $hdr;
 }
 
-// ✅ HARD RULE: if not ?all=1 and no branch was resolved → 400.
-//    NEVER fall back to "first active branch".
 if (!$FETCH_ALL && $requestedBranchId <= 0) {
     http_response_code(400);
     echo json_encode([
@@ -90,7 +84,6 @@ if (!$FETCH_ALL && $requestedBranchId <= 0) {
     exit();
 }
 
-// Verify the branch exists (when not ?all=1)
 if (!$FETCH_ALL) {
     $b = $db->prepare("SELECT id FROM branches WHERE id = ? LIMIT 1");
     $b->execute([$requestedBranchId]);
@@ -195,7 +188,7 @@ function formatMember($m) {
 }
 
 // ============================================================
-// GET ALL — strict branch scoping
+// GET ALL
 // ============================================================
 function getMembers($db) {
     global $BRANCH_ID, $FETCH_ALL;
@@ -350,7 +343,6 @@ function createMember($db) {
             ]);
             $id = $db->lastInsertId();
 
-            // Mirror into admins (if applicable)
             if ($role === 'admin' || $role === 'administrator') {
                 $tc = $db->query("SHOW TABLES LIKE 'admins'");
                 if ($tc->rowCount() > 0) {
@@ -367,7 +359,6 @@ function createMember($db) {
                 }
             }
 
-            // Initial-balance transaction
             if ($initialBalance > 0) {
                 $tc = $db->query("SHOW TABLES LIKE 'transactions'");
                 if ($tc->rowCount() > 0) {
@@ -441,7 +432,6 @@ function updateMember($db, $id) {
 
         $rowBranchId = (int)($current['branch_id'] ?? $BRANCH_ID);
 
-        // Email uniqueness
         if (isset($data['email']) && $data['email'] !== $current['email']) {
             $ec = $db->prepare("SELECT id FROM members WHERE email = ? AND id != ? AND branch_id = ?");
             $ec->execute([$data['email'], $id, $rowBranchId]);
@@ -452,7 +442,6 @@ function updateMember($db, $id) {
             }
         }
 
-        // Phone uniqueness
         if (isset($data['phone']) && !empty($data['phone'])) {
             $cleaned = preg_replace('/\D/', '', $data['phone']);
             if (strlen($cleaned) !== 11 || !startsWith($cleaned, '0')) {
@@ -559,7 +548,6 @@ function updateMember($db, $id) {
             $stmt = $db->prepare($sql);
             $stmt->execute($params);
 
-            // Sync password for admin mirror
             $refresh = $db->prepare("SELECT password FROM members WHERE id = ?");
             $refresh->execute([$id]);
             $currentHash = $refresh->fetchColumn();
