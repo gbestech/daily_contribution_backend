@@ -16,41 +16,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 }
 
 function getDBConnection() {
-    try {
-        $host     = getenv('DB_HOST')     ?: 'localhost';
-        $dbname   = getenv('DB_NAME')     ?: 'baleeg_db';
-        $username = getenv('DB_USER')     ?: 'root';
-        $password = getenv('DB_PASSWORD') ?: '';
-        $port     = getenv('DB_PORT')     ?: '3306';
+    $host     = getenv('DB_HOST')     ?: 'localhost';
+    $dbname   = getenv('DB_NAME')     ?: 'baleeg_db';
+    $username = getenv('DB_USER')     ?: 'root';
+    $password = getenv('DB_PASSWORD') ?: '';
+    $port     = getenv('DB_PORT')     ?: '3306';
 
-        $sslOptions = [];
-        $caPath = getenv('DB_SSL_CA_PATH');
-        if (!$caPath || !file_exists($caPath)) {
-            $candidates = [
-                dirname(__DIR__, 2) . '/ca.pem',
-                __DIR__ . '/ca.pem',
-            ];
-            foreach ($candidates as $c) {
-                if (file_exists($c)) { $caPath = $c; break; }
-            }
+    $sslOptions = [];
+    $caPath = getenv('DB_SSL_CA_PATH');
+    if (!$caPath || !file_exists($caPath)) {
+        $candidates = [
+            dirname(__DIR__, 2) . '/ca.pem',
+            __DIR__ . '/ca.pem',
+        ];
+        foreach ($candidates as $c) {
+            if (file_exists($c)) { $caPath = $c; break; }
         }
-        if ($caPath && file_exists($caPath)) {
-            $sslOptions = [
-                PDO::MYSQL_ATTR_SSL_CA => $caPath,
-                PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT => true,
-            ];
-        }
-
-        $dsn = "mysql:host=$host;port=$port;dbname=$dbname;charset=utf8mb4";
-        $pdo = new PDO($dsn, $username, $password, $sslOptions);
-        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-        $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
-
-        return $pdo;
-    } catch (PDOException $e) {
-        error_log("Database connection failed: " . $e->getMessage());
-        return null;
     }
+    if ($caPath && file_exists($caPath)) {
+        $sslOptions = [
+            PDO::MYSQL_ATTR_SSL_CA => $caPath,
+            PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT => true,
+        ];
+    }
+
+    $dsn = "mysql:host=$host;port=$port;dbname=$dbname;charset=utf8mb4";
+
+    // ⚠️ TEMPORARY: no try/catch here. Any PDOException will bubble up
+    // so db-check.php and members.php show the real error.
+    $pdo = new PDO($dsn, $username, $password, $sslOptions);
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+
+    return $pdo;
 }
 
 function initializeDatabase($db) {
@@ -76,7 +74,6 @@ function initializeDatabase($db) {
             )
         ");
 
-        // Seed default branch if empty
         $cnt = $db->query("SELECT COUNT(*) FROM branches")->fetchColumn();
         if ((int)$cnt === 0) {
             $db->exec("INSERT INTO branches (name, code, status) VALUES ('Main Branch', 'MAIN', 'Active')");
